@@ -28,18 +28,32 @@ docs/
   DEPLOY_APP_NOVO.md      passo a passo: publicar a API + publicar o app no GitHub Pages
 ```
 
-## Fase 1 (pronta) x Fase 2 (próxima)
+## Fase 1 e Fase 2 (ambas prontas)
 
-**Fase 1 — feita nesta entrega**: seleção de unidade (nome + unidade, sem
-senha), menu principal com cards de KPI, cadastro de Equipamentos e de
-Preventiva de Armazém (com vínculo automático nas abas fixas, do jeito que
-já funcionava na planilha), e as telas operacionais de Preventivas de
-Equipamentos/Armazém (status colorido, marcar como realizada).
+**Fase 1**: seleção de unidade (nome + unidade, sem senha), menu principal
+com cards de KPI, cadastro de Equipamentos e de Preventiva de Armazém (com
+vínculo automático nas abas fixas), e as telas operacionais de Preventivas
+de Equipamentos/Armazém (status colorido, marcar como realizada).
 
-**Fase 2 — próxima**: tela de Manutenções Corretivas (com Tempo Parado e
-Custo Total calculados), Histórico com filtros múltiplos, e tela de Custos
-com o detalhamento. O Dashboard Geral (Google Sheets) já cobre esses dados
-hoje; a Fase 2 leva essas mesmas informações para dentro do app.
+**Fase 2**: tela de Manutenções Corretivas (com Data/Hora Início e Fim,
+Tempo Parado calculado automaticamente); Histórico de preventivas com
+filtros (busca, classificação, ano — sem filtro de unidade, já que ela é
+escolhida na entrada do app); Dashboard de Gastos por unidade (Budget,
+Gasto e Saldo, separados por Equipamentos e Predial, mais custo por tipo e
+evolução mensal); Dashboard de Tempo Ocioso (quantos equipamentos pararam,
+quanto tempo cada um, total, e quais são recorrentes); e a opção **"Todas
+as unidades"** na tela de entrada, que dá acesso só aos 2 dashboards acima
+já consolidados nas 3 unidades — sem cadastro nem lançamento, que
+continuam exigindo escolher uma unidade específica.
+
+Ao marcar uma preventiva de **equipamento** como realizada, ou ao registrar
+uma **corretiva**, o app pede Data/Hora Início e Fim e calcula o tempo
+parado sozinho — isso é o que alimenta o Dashboard de Tempo Ocioso.
+
+O Budget de cada unidade fica numa aba nova, **Orcamento** (Unidade,
+Classificação, Ano, Budget Anual), criada automaticamente por
+"Configurar planilha" com os valores que você passou por print — edite
+direto na aba a qualquer momento para ajustar ou adicionar outros anos.
 
 ## Como instalar na sua planilha Google Sheets
 

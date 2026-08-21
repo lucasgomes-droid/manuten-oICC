@@ -52,14 +52,37 @@ function _ensureSheetWithHeaders(ss, name, headers) {
   const hasHeaders = existingHeaders.some(h => h !== '');
   if (!hasHeaders) {
     sheet.getRange(1, 1, 1, headers.length).setValues([headers]);
+  } else {
+    // Aba já existia (de uma versão anterior) — só adiciona no fim as
+    // colunas novas que ainda não existem, sem tocar em nada que já tinha.
+    _ensureColumns_(sheet, headers);
   }
-  sheet.getRange(1, 1, 1, headers.length)
+  const totalCols = sheet.getLastColumn();
+  sheet.getRange(1, 1, 1, totalCols)
     .setFontWeight('bold')
     .setBackground('#1c2b39')
     .setFontColor('#ffffff');
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, headers.length);
+  sheet.autoResizeColumns(1, totalCols);
   return sheet;
+}
+
+/**
+ * Adiciona, no fim da linha 1, qualquer cabeçalho de `headers` que ainda não
+ * exista na aba — usado para atualizar abas já criadas em versões antigas
+ * sem apagar ou reordenar nada que já existe (ex: nova coluna "Registrado
+ * Por" adicionada na Fase 3).
+ */
+function _ensureColumns_(sheet, headers) {
+  const lastCol = sheet.getLastColumn();
+  const existing = (lastCol > 0 ? sheet.getRange(1, 1, 1, lastCol).getValues()[0] : [])
+    .map(h => String(h).trim());
+  headers.forEach(h => {
+    if (existing.indexOf(h) === -1) {
+      sheet.getRange(1, sheet.getLastColumn() + 1).setValue(h);
+      existing.push(h);
+    }
+  });
 }
 
 function _setupConfigSheet(ss) {

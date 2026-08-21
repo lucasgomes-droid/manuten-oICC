@@ -53,6 +53,7 @@ function logPreventivaRealizada_(data) {
     'Serviço Realizado': data.servico || 'PREVENTIVA',
     'Valor': data.valor || '',
     'Documento / Anexo': data.anexo || '',
+    'Registrado Por': data.registradoPor || '',
   });
   // Se veio Data Fim (preventiva de equipamento, com início/fim capturados
   // no app), calcula o tempo parado automaticamente — fica em branco (fórmula

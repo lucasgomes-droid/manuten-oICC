@@ -28,7 +28,7 @@ docs/
   DEPLOY_APP_NOVO.md      passo a passo: publicar a API + publicar o app no GitHub Pages
 ```
 
-## Fase 1 e Fase 2 (ambas prontas)
+## Fase 1, Fase 2 e Fase 3 (todas prontas)
 
 **Fase 1**: seleção de unidade (nome + unidade, sem senha), menu principal
 com cards de KPI, cadastro de Equipamentos e de Preventiva de Armazém (com
@@ -54,6 +54,29 @@ O Budget de cada unidade fica numa aba nova, **Orcamento** (Unidade,
 Classificação, Ano, Budget Anual), criada automaticamente por
 "Configurar planilha" com os valores que você passou por print — edite
 direto na aba a qualquer momento para ajustar ou adicionar outros anos.
+
+**Fase 3**: login por nome (lista fixa de pessoas, sem digitar — cada
+nome já tem uma unidade padrão, menos os "gerais" que escolhem na hora);
+todo lançamento novo (corretiva, preventiva com custo, ou marcar uma
+preventiva de rotina como feita) grava quem registrou; **anexo**
+(orçamento, nota fiscal, certificação) obrigatório nos lançamentos de
+manutenção e opcional ao marcar uma preventiva de rotina — fica salvo no
+Google Drive (pasta "Gestão de Manutenção - Anexos", organizada por
+unidade) e aparece como link clicável no Histórico e nas listas, para
+auditoria; **Equipamento/Local** agora é uma lista suspensa vinda direto
+do cadastro (evita erro de digitação), com opção de digitar manualmente
+se o item ainda não estiver cadastrado; a tela de **Manutenções
+Corretivas** virou **"Lançar Manutenção"**, com um seletor Corretiva/
+Preventiva/Outro tipo — o histórico continua em duas abas separadas
+(Manutenções Corretivas e Manutenções Preventivas); os cards de status no
+menu principal (atrasadas, pendentes etc.) agora são clicáveis e abrem a
+lista já filtrada; e os dois dashboards de "Todas as unidades" ganharam
+gráfico comparando Macatuba/Jundiaí I/Jundiaí II lado a lado.
+
+Combinado com o Lucas: campos obrigatórios (equipamento, classificação,
+início, fim, valor e anexo) ficaram bem restritivos de propósito — se
+algum lançamento no dia a dia não tiver, por exemplo, um valor ainda
+definido, me avisa que eu relaxo essa regra pontualmente.
 
 ## Como instalar na sua planilha Google Sheets
 

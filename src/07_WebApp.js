@@ -156,6 +156,7 @@ function _configLists_() {
     tiposManutencao: TIPOS_MANUTENCAO,
     criticidades: CRITICIDADES,
     frequencias: FREQUENCIAS,
+    usuarios: USUARIOS,
   };
 }
 
@@ -263,6 +264,45 @@ function _dashboardCards_(unidade) {
 }
 
 // ---------------------------------------------------------------------
+// Anexos (Google Drive)
+// ---------------------------------------------------------------------
+
+/**
+ * Salva um anexo (enviado pelo app como data URL base64) numa pasta do
+ * Drive organizada por unidade, deixa o link acessível para quem tiver o
+ * link (para poder abrir direto do app/planilha em auditoria) e devolve a
+ * URL para gravar na coluna de anexo. Devolve '' se não veio anexo.
+ */
+function _salvarAnexo_(base64DataUrl, nomeArquivo, unidade) {
+  if (!base64DataUrl) return '';
+  const match = String(base64DataUrl).match(/^data:([^;]+);base64,(.*)$/);
+  if (!match) throw new Error('Anexo em formato inválido.');
+  const mime = match[1];
+  const bytes = Utilities.base64Decode(match[2]);
+  const blob = Utilities.newBlob(bytes, mime, nomeArquivo || 'anexo');
+  const pasta = _pastaAnexos_(unidade);
+  const file = pasta.createFile(blob);
+  try {
+    file.setSharing(DriveApp.Access.ANYONE_WITH_LINK, DriveApp.Permission.VIEW);
+  } catch (e) {
+    // Se o compartilhamento por link estiver bloqueado pelo Workspace, o
+    // arquivo ainda fica salvo (só não abre pra quem não tiver acesso à
+    // pasta) — não trava o lançamento por causa disso.
+  }
+  return file.getUrl();
+}
+
+function _pastaAnexos_(unidade) {
+  const raizNome = 'Gestão de Manutenção - Anexos';
+  const raiz = DriveApp.getRootFolder();
+  const pastasRaiz = raiz.getFoldersByName(raizNome);
+  const pastaRaiz = pastasRaiz.hasNext() ? pastasRaiz.next() : raiz.createFolder(raizNome);
+  const subNome = unidade || 'Geral';
+  const sub = pastaRaiz.getFoldersByName(subNome);
+  return sub.hasNext() ? sub.next() : pastaRaiz.createFolder(subNome);
+}
+
+// ---------------------------------------------------------------------
 // Escrita
 // ---------------------------------------------------------------------
 
@@ -345,11 +385,14 @@ function _criarEstrutura_(payload) {
  * automaticamente, pois são fórmulas) e cria o registro correspondente em
  * Historico_Preventivas — igual ao que acontece ao editar a célula na mão.
  *
- * Para equipamento, aceita opcionalmente dataInicio + dataFim (quando o
- * equipamento parou e quando voltou) — nesse caso o Tempo Parada (h) em
- * Historico_Preventivas é calculado automaticamente. Sem esses dois campos
- * (ex: armazém, que não tem esse conceito), continua só com uma data, como
- * antes.
+ * Para equipamento, Data/Hora Início + Fim são OBRIGATÓRIOS (é o que
+ * alimenta o Dashboard de Tempo Ocioso) — o Tempo Parada (h) em
+ * Historico_Preventivas é calculado automaticamente a partir delas. Para
+ * armazém (que não tem esse conceito de "parada"), continua só com uma
+ * data de realização.
+ *
+ * Aceita opcionalmente um anexo (certificação/comprovante da preventiva,
+ * en­viado como data URL base64) e o nome de quem registrou (auditoria).
  */
 function _marcarPreventivaRealizada_(payload) {
   _requireFields_(payload, ['tipo', 'idPreventiva']);
@@ -357,6 +400,12 @@ function _marcarPreventivaRealizada_(payload) {
   if (tipo !== 'equipamento' && tipo !== 'armazem') {
     throw new Error('"tipo" deve ser "equipamento" ou "armazem".');
   }
+  if (tipo === 'equipamento') {
+    _requireFields_(payload, ['dataInicio', 'dataFim']);
+  } else {
+    _requireFields_(payload, ['dataRealizacao']);
+  }
+
   const sheetName = tipo === 'equipamento' ? SHEETS.PREV_EQUIP : SHEETS.PREV_ARMAZEM;
   const sheet = getSheet_(sheetName);
   const idCol = colIndex(sheetName, 'ID_Preventiva');
@@ -368,10 +417,8 @@ function _marcarPreventivaRealizada_(payload) {
   if (idx === -1) throw new Error('Preventiva não encontrada: ' + payload.idPreventiva);
   const row = idx + 2;
 
-  const temInicioFim = tipo === 'equipamento' && payload.dataInicio && payload.dataFim;
-  const dataInicio = temInicioFim
-    ? new Date(payload.dataInicio)
-    : (payload.dataRealizacao ? new Date(payload.dataRealizacao) : new Date());
+  const isEquip = tipo === 'equipamento';
+  const dataInicio = isEquip ? new Date(payload.dataInicio) : new Date(payload.dataRealizacao);
 
   const ultimaCol = colIndex(sheetName, 'Última Preventiva');
   sheet.getRange(row, ultimaCol).setValue(dataInicio);
@@ -382,11 +429,14 @@ function _marcarPreventivaRealizada_(payload) {
   }
   SpreadsheetApp.flush();
 
-  if (temInicioFim) {
-    const values = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
-    const get = (header) => values[colIndex(sheetName, header) - 1];
+  const values = sheet.getRange(row, 1, 1, sheet.getLastColumn()).getValues()[0];
+  const get = (header) => values[colIndex(sheetName, header) - 1];
+  const unidade = get('Unidade');
+  const anexoUrl = payload.anexoBase64 ? _salvarAnexo_(payload.anexoBase64, payload.anexoNome, unidade) : '';
+
+  if (isEquip) {
     logPreventivaRealizada_({
-      unidade: get('Unidade'),
+      unidade: unidade,
       dataRealizacao: dataInicio,
       dataFim: new Date(payload.dataFim),
       classificacao: 'EQUIPAMENTOS',
@@ -394,13 +444,22 @@ function _marcarPreventivaRealizada_(payload) {
       prestadora: get('Fornecedor'),
       servico: 'PREVENTIVA',
       valor: '',
-      anexo: '',
+      anexo: anexoUrl,
+      registradoPor: payload.registradoPor || '',
     });
   } else {
-    // Mesma lógica do onEdit (03_Historico.js), chamada direta — edições
-    // feitas por script não disparam o gatilho onEdit instalável da mesma
-    // forma que uma edição manual, então garantimos o log aqui.
-    onUltimaPreventivaEditada_(sheetName, row);
+    logPreventivaRealizada_({
+      unidade: unidade,
+      dataRealizacao: dataInicio,
+      dataFim: '',
+      classificacao: 'PREDIAL',
+      equipamento: get('Equipamento / Estrutura'),
+      prestadora: get('Responsável'),
+      servico: 'PREVENTIVA',
+      valor: '',
+      anexo: anexoUrl,
+      registradoPor: payload.registradoPor || '',
+    });
   }
   SpreadsheetApp.flush();
 
@@ -409,17 +468,29 @@ function _marcarPreventivaRealizada_(payload) {
 }
 
 /**
- * Registra uma manutenção corretiva (ou instalação, ponto de melhoria etc.)
- * em Manutencoes_Custos. Se vier Data Fim, o Tempo Parada (h) é calculado
- * automaticamente por fórmula — igual ao que já acontecia ao editar essas
- * datas direto na planilha.
+ * Registra um lançamento de manutenção em Manutencoes_Custos — tanto
+ * corretiva quanto preventiva (ou instalação, ponto de melhoria etc., ver
+ * TIPOS_MANUTENCAO), é a mesma tela/ação no app, só muda o "Tipo". É essa
+ * unificação que faz a preventiva também aparecer no Dashboard de Gastos
+ * (custo por tipo), já que a preventiva "de rotina" (marcarPreventivaRealizada)
+ * não tem valor/custo associado.
+ *
+ * Equipamento, Classificação, Data Início, Data Fim, Valor e Anexo são
+ * obrigatórios (pedido explícito do Lucas, para nunca perder o
+ * comprovante/valor de um lançamento). O Tempo Parada (h) é calculado
+ * automaticamente por fórmula a partir de Início/Fim.
  */
 function _criarCorretiva_(payload) {
-  _requireFields_(payload, ['unidade', 'classificacao', 'equipamento', 'dataInicio']);
+  _requireFields_(payload, ['unidade', 'classificacao', 'equipamento', 'dataInicio', 'dataFim', 'valor']);
+  if (!payload.anexoBase64) {
+    throw new Error('Anexo obrigatório: anexe o orçamento/comprovante/certificação deste lançamento.');
+  }
   _requireUnidade_(payload.unidade);
   if (CLASSIFICACOES.indexOf(payload.classificacao) === -1) {
     throw new Error('Classificação inválida: "' + payload.classificacao + '". Use uma de: ' + CLASSIFICACOES.join(', '));
   }
+
+  const anexoUrl = _salvarAnexo_(payload.anexoBase64, payload.anexoNome, payload.unidade);
 
   const sheet = getSheet_(SHEETS.MANUTENCOES);
   const row = sheet.getLastRow() + 1;
@@ -427,14 +498,15 @@ function _criarCorretiva_(payload) {
     'ID_Manutencao': nextId_('MA'),
     'Unidade': payload.unidade,
     'Data Início': new Date(payload.dataInicio),
-    'Data Fim': payload.dataFim ? new Date(payload.dataFim) : '',
+    'Data Fim': new Date(payload.dataFim),
     'Responsável': payload.responsavel || '',
     'Classificação': payload.classificacao,
     'Tipo': payload.tipo || 'CORRETIVA',
     'Equipamento': payload.equipamento,
     'Descrição do Serviço': payload.descricao || '',
-    'Valor': payload.valor || 0,
-    'Anexo': payload.anexo || '',
+    'Valor': payload.valor,
+    'Anexo': anexoUrl,
+    'Registrado Por': payload.registradoPor || '',
   });
   recalcTempoParada_(SHEETS.MANUTENCOES, row);
   SpreadsheetApp.flush();
@@ -641,13 +713,30 @@ function _dashboardTempoOcioso_(unidadeParam) {
     .map(e => Object.assign({}, e, { recorrente: e.ocorrencias > 1 }))
     .sort((a, b) => b.horasTotal - a.horasTotal);
 
-  return {
+  const resultado = {
     unidade: isTodas ? 'Todas' : unidadeParam,
     totalEquipamentosParados: equipamentos.length,
     horasTotal: equipamentos.reduce((s, e) => s + e.horasTotal, 0),
     totalRecorrentes: equipamentos.filter(e => e.recorrente).length,
     equipamentos: equipamentos,
   };
+
+  // Com "Todas as unidades", adiciona o mesmo resumo separado por unidade
+  // (Macatuba / Jundiaí I / Jundiaí II) — igual ao gráfico por unidade do
+  // Dashboard de Gastos, pra dar pra comparar de relance.
+  if (isTodas) {
+    resultado.porUnidade = UNIDADES.map(u => {
+      const doUnidade = equipamentos.filter(e => e.unidade === u);
+      return {
+        unidade: u,
+        totalEquipamentosParados: doUnidade.length,
+        horasTotal: doUnidade.reduce((s, e) => s + e.horasTotal, 0),
+        totalRecorrentes: doUnidade.filter(e => e.recorrente).length,
+      };
+    });
+  }
+
+  return resultado;
 }
 
 // ---------------------------------------------------------------------

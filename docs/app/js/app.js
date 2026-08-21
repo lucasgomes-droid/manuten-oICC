@@ -1,15 +1,18 @@
 /**
  * app.js — roteador e telas do app:
- *   #/selecao                     seleção de nome + unidade (ou "Todas as unidades")
- *   #/menu                        menu principal com cards de KPI
+ *   #/selecao                     seleção de nome (lista fixa) + unidade (ou "Todas as unidades")
+ *   #/menu                        menu principal com cards de KPI (clicáveis -> #/preventivas?status=...)
  *   #/cadastro-equipamento        cadastro de equipamento (+ lista)
  *   #/cadastro-armazem            cadastro de preventiva de armazém (+ lista)
  *   #/preventivas-equipamento     operação: preventivas de equipamentos
  *   #/preventivas-armazem         operação: preventivas de armazém
- *   #/corretivas                  registrar manutenção corretiva (+ lista)
- *   #/historico                   histórico de preventivas, com filtros
+ *   #/preventivas                 operação: equipamentos + armazém juntos, filtrável por ?status=
+ *   #/manutencoes                 lançar manutenção (corretiva OU preventiva, mesma tela)
+ *   #/manutencoes-corretivas      histórico de lançamentos tipo CORRETIVA
+ *   #/manutencoes-preventivas     histórico de lançamentos tipo PREVENTIVA (com custo)
+ *   #/historico                   histórico de preventivas de rotina marcadas como feitas, com filtros
  *   #/dashboard-custos            budget / saldo / gasto (por unidade, ou "Todas")
- *   #/dashboard-tempo-ocioso      equipamentos parados, horas, recorrência
+ *   #/dashboard-tempo-ocioso      equipamentos parados, horas, recorrência (por unidade, ou "Todas")
  *
  * Vanilla JS de propósito (sem framework/bundler) — abre direto no GitHub
  * Pages, sem passo de build.
@@ -87,6 +90,19 @@ function barList(items, opts) {
   }).join('')}</div>`;
 }
 
+/** Lê um <input type="file"> e devolve uma Promise com a data URL base64 (ou '' se nenhum arquivo escolhido). */
+function fileParaBase64(input) {
+  return new Promise((resolve, reject) => {
+    const file = input && input.files && input.files[0];
+    if (!file) { resolve({ base64: '', nome: '' }); return; }
+    if (file.size > 15 * 1024 * 1024) { reject(new Error('Anexo maior que 15MB — escolha um arquivo menor.')); return; }
+    const reader = new FileReader();
+    reader.onload = () => resolve({ base64: reader.result, nome: file.name });
+    reader.onerror = () => reject(new Error('Não foi possível ler o arquivo anexado.'));
+    reader.readAsDataURL(file);
+  });
+}
+
 function loadingBlock(label) {
   return `<div class="loading"><div class="spinner"></div><p>${escapeHtml(label || 'Carregando...')}</p></div>`;
 }
@@ -127,9 +143,13 @@ const routes = {
   '#/menu': screenMenu,
   '#/cadastro-equipamento': screenCadastroEquipamento,
   '#/cadastro-armazem': screenCadastroArmazem,
-  '#/preventivas-equipamento': () => screenPreventivas('equipamento'),
-  '#/preventivas-armazem': () => screenPreventivas('armazem'),
-  '#/corretivas': screenCorretivas,
+  '#/preventivas-equipamento': (q) => screenPreventivas('equipamento', q),
+  '#/preventivas-armazem': (q) => screenPreventivas('armazem', q),
+  '#/preventivas': (q) => screenPreventivas('todas', q),
+  '#/manutencoes': screenLancarManutencao,
+  '#/corretivas': screenLancarManutencao, // rota antiga — mesma tela nova
+  '#/manutencoes-corretivas': () => screenListaManutencoes('CORRETIVA'),
+  '#/manutencoes-preventivas': () => screenListaManutencoes('PREVENTIVA'),
   '#/historico': screenHistorico,
   '#/dashboard-custos': screenDashboardCustos,
   '#/dashboard-tempo-ocioso': screenDashboardTempoOcioso,
@@ -137,19 +157,21 @@ const routes = {
 
 async function router() {
   let hash = window.location.hash || '#/selecao';
+  const [path, queryStr] = hash.split('?');
+  const query = new URLSearchParams(queryStr || '');
   const session = Session.get();
-  if (!session && hash !== '#/selecao') {
+  if (!session && path !== '#/selecao') {
     window.location.hash = '#/selecao';
     return;
   }
-  const screen = routes[hash] || screenNotFound;
+  const screen = routes[path] || screenNotFound;
   root.innerHTML = loadingBlock('Carregando...');
   try {
-    const html = await screen();
+    const html = await screen(query);
     root.innerHTML = html;
     window.scrollTo(0, 0);
   } catch (err) {
-    root.innerHTML = errorBlock(err, hash);
+    root.innerHTML = errorBlock(err, path);
   }
 }
 
@@ -184,9 +206,11 @@ function screenNotFound() {
 
 async function screenSelecao() {
   let unidades = ['Macatuba', 'Jundiaí I', 'Jundiaí II'];
+  let usuarios = [];
   try {
     const cfg = Cache.get('config') || Cache.set('config', await Api.config());
     if (cfg && cfg.unidades && cfg.unidades.length) unidades = cfg.unidades;
+    if (cfg && cfg.usuarios && cfg.usuarios.length) usuarios = cfg.usuarios;
   } catch (e) {
     // segue com a lista padrão embutida acima se a API ainda não estiver
     // configurada/no ar — assim a tela nunca fica travada em branco.
@@ -196,12 +220,24 @@ async function screenSelecao() {
   setTimeout(() => {
     const form = document.getElementById('form-selecao');
     if (!form) return;
+
+    // Escolher o nome já pré-seleciona a unidade da pessoa (quando ela não
+    // é "geral") — continua editável, caso alguém precise trocar.
+    if (form.nome && form.nome.tagName === 'SELECT') {
+      form.nome.addEventListener('change', () => {
+        const u = usuarios.find(x => x.nome === form.nome.value);
+        if (u && u.unidade && u.unidade !== 'geral') {
+          form.unidade.value = u.unidade;
+        }
+      });
+    }
+
     form.addEventListener('submit', (e) => {
       e.preventDefault();
       const nome = form.nome.value.trim();
       const unidade = form.unidade.value;
       if (!nome || !unidade) {
-        toast('Preencha seu nome e escolha a unidade.', 'erro');
+        toast('Escolha seu nome e a unidade.', 'erro');
         return;
       }
       Session.set(nome, unidade);
@@ -209,6 +245,13 @@ async function screenSelecao() {
       window.location.hash = '#/menu';
     });
   }, 0);
+
+  const campoNome = usuarios.length
+    ? `<select name="nome" required>
+        <option value="" disabled ${!existente ? 'selected' : ''}>Selecione...</option>
+        ${usuarios.map(u => `<option value="${escapeHtml(u.nome)}" ${existente && existente.nome === u.nome ? 'selected' : ''}>${escapeHtml(u.nome)}</option>`).join('')}
+      </select>`
+    : `<input type="text" name="nome" placeholder="Ex: Lucas" value="${escapeHtml(existente ? existente.nome : '')}" required />`;
 
   return `
     <div class="tela-selecao">
@@ -218,7 +261,7 @@ async function screenSelecao() {
         <p class="subtitle">Macatuba · Jundiaí I · Jundiaí II</p>
         <form id="form-selecao">
           <label>Seu nome
-            <input type="text" name="nome" placeholder="Ex: Lucas" value="${escapeHtml(existente ? existente.nome : '')}" required />
+            ${campoNome}
           </label>
           <label>Unidade
             <select name="unidade" required>
@@ -291,12 +334,13 @@ async function screenMenu() {
       </section>
 
       <section class="status-strip">
-        <div class="status-pill status-pill--em_dia"><span>🟢</span> ${st.em_dia} em dia</div>
-        <div class="status-pill status-pill--proxima"><span>🟡</span> ${st.proxima} próxima</div>
-        <div class="status-pill status-pill--para_hoje"><span>🟠</span> ${st.para_hoje} p/ hoje</div>
-        <div class="status-pill status-pill--atrasada"><span>🔴</span> ${st.atrasada} atrasada${st.atrasada === 1 ? '' : 's'}</div>
-        ${st.pendente ? `<div class="status-pill status-pill--pendente"><span>⚪</span> ${st.pendente} pendente${st.pendente === 1 ? '' : 's'}</div>` : ''}
+        <button class="status-pill status-pill--em_dia" data-nav="#/preventivas?status=em_dia"><span>🟢</span> ${st.em_dia} em dia</button>
+        <button class="status-pill status-pill--proxima" data-nav="#/preventivas?status=proxima"><span>🟡</span> ${st.proxima} próxima</button>
+        <button class="status-pill status-pill--para_hoje" data-nav="#/preventivas?status=para_hoje"><span>🟠</span> ${st.para_hoje} p/ hoje</button>
+        <button class="status-pill status-pill--atrasada" data-nav="#/preventivas?status=atrasada"><span>🔴</span> ${st.atrasada} atrasada${st.atrasada === 1 ? '' : 's'}</button>
+        ${st.pendente ? `<button class="status-pill status-pill--pendente" data-nav="#/preventivas?status=pendente"><span>⚪</span> ${st.pendente} pendente${st.pendente === 1 ? '' : 's'}</button>` : ''}
       </section>
+      <p class="muted status-strip__dica">Clique num status acima para ver a lista já filtrada.</p>
 
       <h2 class="section-title">Cadastro</h2>
       <section class="menu-grid">
@@ -320,9 +364,17 @@ async function screenMenu() {
           <span class="menu-tile__icon">📦</span>
           <span class="menu-tile__label">Preventivas de Armazém</span>
         </button>
-        <button class="menu-tile" data-nav="#/corretivas">
+        <button class="menu-tile" data-nav="#/manutencoes">
+          <span class="menu-tile__icon">📝</span>
+          <span class="menu-tile__label">Lançar Manutenção</span>
+        </button>
+        <button class="menu-tile" data-nav="#/manutencoes-corretivas">
           <span class="menu-tile__icon">🚨</span>
           <span class="menu-tile__label">Manutenções Corretivas</span>
+        </button>
+        <button class="menu-tile" data-nav="#/manutencoes-preventivas">
+          <span class="menu-tile__icon">✅</span>
+          <span class="menu-tile__label">Manutenções Preventivas</span>
         </button>
         <button class="menu-tile" data-nav="#/historico">
           <span class="menu-tile__icon">🗂️</span>
@@ -538,22 +590,30 @@ const STATUS_LABEL = {
   em_dia: '🟢 Em dia', pendente: '⚪ Pendente',
 };
 
-async function screenPreventivas(tipo) {
+async function screenPreventivas(tipo, query) {
   const s = Session.get();
-  const isEquip = tipo === 'equipamento';
-  const titulo = isEquip ? 'Preventivas de Equipamentos' : 'Preventivas de Armazém';
+  const isTodas = tipo === 'todas';
+  const titulo = isTodas ? 'Preventivas (Equipamentos + Armazém)'
+    : (tipo === 'equipamento' ? 'Preventivas de Equipamentos' : 'Preventivas de Armazém');
   let lista;
   try {
-    lista = isEquip ? await Api.preventivasEquipamentos(s.unidade) : await Api.preventivasArmazem(s.unidade);
+    if (isTodas) {
+      const [eq, arm] = await Promise.all([Api.preventivasEquipamentos(s.unidade), Api.preventivasArmazem(s.unidade)]);
+      lista = eq.map(r => Object.assign({}, r, { _tipo: 'equipamento', _nome: r['Equipamento'] }))
+        .concat(arm.map(r => Object.assign({}, r, { _tipo: 'armazem', _nome: r['Equipamento / Estrutura'] })));
+    } else if (tipo === 'equipamento') {
+      lista = (await Api.preventivasEquipamentos(s.unidade)).map(r => Object.assign({}, r, { _tipo: 'equipamento', _nome: r['Equipamento'] }));
+    } else {
+      lista = (await Api.preventivasArmazem(s.unidade)).map(r => Object.assign({}, r, { _tipo: 'armazem', _nome: r['Equipamento / Estrutura'] }));
+    }
   } catch (err) {
     return `${header(titulo, { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
 
   lista.sort((a, b) => STATUS_ORDEM.indexOf(a._status.codigo) - STATUS_ORDEM.indexOf(b._status.codigo));
 
-  setTimeout(() => bindPreventivasScreen(tipo, lista), 0);
-
-  const nomeCol = isEquip ? 'Equipamento' : 'Equipamento / Estrutura';
+  const statusInicial = (query && query.get('status')) || '';
+  setTimeout(() => bindPreventivasScreen(statusInicial), 0);
 
   return `
     ${header(titulo, { back: '#/menu' })}
@@ -562,11 +622,11 @@ async function screenPreventivas(tipo) {
         <input type="search" id="busca-preventiva" placeholder="Buscar por nome..." />
         <select id="filtro-status">
           <option value="">Todos os status</option>
-          ${STATUS_ORDEM.map(c => `<option value="${c}">${STATUS_LABEL[c]}</option>`).join('')}
+          ${STATUS_ORDEM.map(c => `<option value="${c}" ${c === statusInicial ? 'selected' : ''}>${STATUS_LABEL[c]}</option>`).join('')}
         </select>
       </div>
       <div class="list" id="lista-preventivas">
-        ${lista.length ? lista.map(r => rowPreventiva(r, nomeCol, tipo)).join('') :
+        ${lista.length ? lista.map(r => rowPreventiva(r, isTodas)).join('') :
           '<p class="empty-state">Nenhuma preventiva cadastrada ainda nesta unidade.</p>'}
       </div>
 
@@ -575,21 +635,25 @@ async function screenPreventivas(tipo) {
           <h3>Marcar preventiva como realizada</h3>
           <p id="modal-item-nome" class="muted"></p>
           <form id="form-realizar">
-            ${isEquip ? `
-            <label>Data/Hora Início <span class="muted">(quando o equipamento parou)</span>
-              <input type="datetime-local" name="dataInicio" required />
-            </label>
-            <label>Data/Hora Fim <span class="muted">(quando voltou a funcionar)</span>
-              <input type="datetime-local" name="dataFim" required />
-            </label>
-            <p class="tempo-parado-preview">Tempo parado: <strong id="tempo-parado-valor">—</strong></p>
-            ` : `
-            <label>Data da realização
-              <input type="date" name="dataRealizacao" required />
-            </label>
-            `}
+            <div id="campos-equip">
+              <label>Data/Hora Início <span class="muted">(quando o equipamento parou)</span>
+                <input type="datetime-local" name="dataInicio" />
+              </label>
+              <label>Data/Hora Fim <span class="muted">(quando voltou a funcionar)</span>
+                <input type="datetime-local" name="dataFim" />
+              </label>
+              <p class="tempo-parado-preview">Tempo parado: <strong id="tempo-parado-valor">—</strong></p>
+            </div>
+            <div id="campos-armazem">
+              <label>Data da realização
+                <input type="date" name="dataRealizacao" />
+              </label>
+            </div>
             <label>Observação
               <textarea name="observacao" rows="3" placeholder="Opcional"></textarea>
+            </label>
+            <label>Certificação / comprovante <span class="muted">(opcional — foto ou PDF, fica salvo para auditoria)</span>
+              <input type="file" name="anexo" accept="image/*,.pdf" />
             </label>
             <div class="modal__actions">
               <button type="button" class="btn btn--secondary" data-action="fechar-modal">Cancelar</button>
@@ -601,21 +665,21 @@ async function screenPreventivas(tipo) {
     </main>`;
 }
 
-function rowPreventiva(r, nomeCol, tipo) {
+function rowPreventiva(r, mostrarTipo) {
   const codigo = r._status.codigo;
-  return `<div class="list-row list-row--preventiva" data-nome="${escapeHtml((r[nomeCol] || '').toLowerCase())}" data-status="${codigo}">
+  return `<div class="list-row list-row--preventiva" data-nome="${escapeHtml((r._nome || '').toLowerCase())}" data-status="${codigo}">
     <div class="list-row__main">
-      <strong>${escapeHtml(r[nomeCol] || '—')}</strong>
-      <span class="muted">Última: ${fmtDate(r['Última Preventiva'])} · Próxima: ${fmtDate(r['Próxima Preventiva'])}</span>
+      <strong>${escapeHtml(r._nome || '—')}</strong>
+      <span class="muted">${mostrarTipo ? (r._tipo === 'equipamento' ? '⚙️ Equipamento · ' : '📦 Armazém · ') : ''}Última: ${fmtDate(r['Última Preventiva'])} · Próxima: ${fmtDate(r['Próxima Preventiva'])}</span>
     </div>
     <div class="list-row__side">
       <span class="badge badge--${codigo}">${STATUS_LABEL[codigo]}</span>
-      <button class="btn btn--small" data-id="${escapeHtml(r['ID_Preventiva'])}" data-tipo="${tipo}" data-nome-item="${escapeHtml(r[nomeCol] || '')}" data-action="abrir-modal">Marcar realizada</button>
+      <button class="btn btn--small" data-id="${escapeHtml(r['ID_Preventiva'])}" data-tipo="${r._tipo}" data-nome-item="${escapeHtml(r._nome || '')}" data-action="abrir-modal">Marcar realizada</button>
     </div>
   </div>`;
 }
 
-function bindPreventivasScreen(tipo, listaOriginal) {
+function bindPreventivasScreen(statusInicial) {
   const busca = document.getElementById('busca-preventiva');
   const filtroStatus = document.getElementById('filtro-status');
   const aplicarFiltro = () => {
@@ -629,11 +693,14 @@ function bindPreventivasScreen(tipo, listaOriginal) {
   };
   busca && busca.addEventListener('input', aplicarFiltro);
   filtroStatus && filtroStatus.addEventListener('change', aplicarFiltro);
+  if (statusInicial) aplicarFiltro();
 
   const modal = document.getElementById('modal-realizar');
   const form = document.getElementById('form-realizar');
-  const isEquip = tipo === 'equipamento';
+  const camposEquip = document.getElementById('campos-equip');
+  const camposArmazem = document.getElementById('campos-armazem');
   let idAtual = null;
+  let tipoAtual = null;
 
   function atualizarTempoParadoPreview() {
     const preview = document.getElementById('tempo-parado-valor');
@@ -647,6 +714,13 @@ function bindPreventivasScreen(tipo, listaOriginal) {
   document.querySelectorAll('[data-action="abrir-modal"]').forEach(btn => {
     btn.addEventListener('click', () => {
       idAtual = btn.dataset.id;
+      tipoAtual = btn.dataset.tipo;
+      const isEquip = tipoAtual === 'equipamento';
+      camposEquip.hidden = !isEquip;
+      camposArmazem.hidden = isEquip;
+      form.dataInicio.required = isEquip;
+      form.dataFim.required = isEquip;
+      form.dataRealizacao.required = !isEquip;
       document.getElementById('modal-item-nome').textContent = btn.dataset.nomeItem;
       const agora = new Date();
       const agoraLocal = new Date(agora.getTime() - agora.getTimezoneOffset() * 60000).toISOString().slice(0, 16);
@@ -658,14 +732,13 @@ function bindPreventivasScreen(tipo, listaOriginal) {
         form.dataRealizacao.value = agoraLocal.slice(0, 10);
       }
       form.observacao.value = '';
+      form.anexo.value = '';
       modal.hidden = false;
     });
   });
 
-  if (isEquip) {
-    form.dataInicio.addEventListener('input', atualizarTempoParadoPreview);
-    form.dataFim.addEventListener('input', atualizarTempoParadoPreview);
-  }
+  form.dataInicio.addEventListener('input', atualizarTempoParadoPreview);
+  form.dataFim.addEventListener('input', atualizarTempoParadoPreview);
 
   modal.querySelectorAll('[data-action="fechar-modal"]').forEach(el => el.addEventListener('click', () => { modal.hidden = true; }));
   modal.addEventListener('click', (e) => { if (e.target === modal) modal.hidden = true; });
@@ -676,7 +749,12 @@ function bindPreventivasScreen(tipo, listaOriginal) {
     btn.disabled = true;
     btn.textContent = 'Salvando...';
     try {
-      const payload = { tipo, idPreventiva: idAtual, observacao: form.observacao.value.trim() };
+      const isEquip = tipoAtual === 'equipamento';
+      const payload = {
+        tipo: tipoAtual, idPreventiva: idAtual,
+        observacao: form.observacao.value.trim(),
+        registradoPor: (Session.get() || {}).nome || '',
+      };
       if (isEquip) {
         if (new Date(form.dataFim.value) < new Date(form.dataInicio.value)) {
           throw new Error('A data/hora de fim não pode ser antes do início.');
@@ -686,6 +764,8 @@ function bindPreventivasScreen(tipo, listaOriginal) {
       } else {
         payload.dataRealizacao = form.dataRealizacao.value;
       }
+      const anexo = await fileParaBase64(form.anexo);
+      if (anexo.base64) { payload.anexoBase64 = anexo.base64; payload.anexoNome = anexo.nome; }
       await Api.marcarPreventivaRealizada(payload);
       Cache.clear();
       toast('Preventiva marcada como realizada!', 'sucesso');
@@ -703,82 +783,111 @@ function bindPreventivasScreen(tipo, listaOriginal) {
 }
 
 // ---------------------------------------------------------------------
-// Tela: Manutenções Corretivas
+// Tela: Lançar Manutenção (corretiva OU preventiva — mesma tela, um
+// seletor de tipo; o histórico depois fica em 2 abas separadas, ver
+// screenListaManutencoes)
 // ---------------------------------------------------------------------
 
-async function screenCorretivas() {
+const TIPOS_PRINCIPAIS = ['CORRETIVA', 'PREVENTIVA'];
+
+async function screenLancarManutencao() {
   const s = Session.get();
-  let cfg, lista;
+  let cfg, equipamentos, estruturas;
   try {
     cfg = Cache.get('config') || Cache.set('config', await Api.config());
-    lista = await Api.custos(s.unidade, {});
+    [equipamentos, estruturas] = await Promise.all([Api.equipamentos(s.unidade), Api.estruturas(s.unidade)]);
   } catch (err) {
-    return `${header('Manutenções Corretivas', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
+    return `${header('Lançar Manutenção', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
 
-  setTimeout(() => bindCorretivasForm(), 0);
+  setTimeout(() => bindLancarManutencaoForm(), 0);
+
+  const opcoesEquip = equipamentos.map(e => `<option value="${escapeHtml(e['Equipamento'])}">⚙️ ${escapeHtml(e['Equipamento'])}</option>`).join('');
+  const opcoesEstrutura = estruturas.map(e => `<option value="${escapeHtml(e['Descrição'] || e['Categoria'])}">📦 ${escapeHtml(e['Descrição'] || e['Categoria'])}</option>`).join('');
+  const outrosTipos = cfg.tiposManutencao.filter(t => TIPOS_PRINCIPAIS.indexOf(t) === -1);
 
   return `
-    ${header('Manutenções Corretivas', { back: '#/menu' })}
+    ${header('Lançar Manutenção', { back: '#/menu' })}
     <main class="container">
-      <form id="form-corretiva" class="card-form">
-        <label>Equipamento / Local *
-          <input type="text" name="equipamento" placeholder="Ex: Empilhadeira Elétrica 01" required />
-        </label>
-        <label>Classificação
-          <select name="classificacao">
-            ${cfg.classificacoes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+      <form id="form-manutencao" class="card-form">
+        <label>Tipo de lançamento *</label>
+        <div class="segmented" id="segmented-tipo">
+          <button type="button" class="segmented__btn segmented__btn--ativo" data-tipo="CORRETIVA">🚨 Corretiva</button>
+          <button type="button" class="segmented__btn" data-tipo="PREVENTIVA">✅ Preventiva</button>
+        </div>
+        <label>Outro tipo <span class="muted">(instalação, ponto de melhoria etc. — deixe em branco para usar o botão acima)</span>
+          <select name="tipoOutro">
+            <option value="">— usar Corretiva/Preventiva acima —</option>
+            ${outrosTipos.map(t => `<option value="${escapeHtml(t)}">${escapeHtml(t)}</option>`).join('')}
           </select>
         </label>
-        <label>Tipo
-          <select name="tipo">
-            ${cfg.tiposManutencao.map(t => `<option value="${escapeHtml(t)}" ${t === 'CORRETIVA' ? 'selected' : ''}>${escapeHtml(t)}</option>`).join('')}
+        <input type="hidden" name="tipo" value="CORRETIVA" />
+
+        <label>Equipamento / Local *
+          <select name="equipamentoSelect" required>
+            <option value="" disabled selected>Selecione no cadastro...</option>
+            ${opcoesEquip}
+            ${opcoesEstrutura}
+            <option value="__outro__">Outro (não está na lista — digitar)</option>
+          </select>
+        </label>
+        <label id="campo-equipamento-outro" hidden>Nome do equipamento/local *
+          <input type="text" name="equipamentoOutro" placeholder="Ex: Empilhadeira Elétrica 01" />
+        </label>
+
+        <label>Classificação *
+          <select name="classificacao" required>
+            ${cfg.classificacoes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
           </select>
         </label>
         <label>Responsável / Prestador
           <input type="text" name="responsavel" placeholder="Ex: Prestadora XYZ" />
         </label>
-        <label>Data/Hora Início <span class="muted">(quando parou)</span>
+        <label>Data/Hora Início * <span class="muted">(quando parou)</span>
           <input type="datetime-local" name="dataInicio" required />
         </label>
-        <label>Data/Hora Fim <span class="muted">(opcional — se ainda está em andamento, deixe em branco)</span>
-          <input type="datetime-local" name="dataFim" />
+        <label>Data/Hora Fim * <span class="muted">(quando voltou a funcionar)</span>
+          <input type="datetime-local" name="dataFim" required />
         </label>
         <p class="tempo-parado-preview">Tempo parado: <strong id="tempo-parado-corretiva">—</strong></p>
         <label>Descrição do serviço
           <textarea name="descricao" rows="3" placeholder="O que foi feito"></textarea>
         </label>
-        <label>Valor (R$)
-          <input type="number" name="valor" step="0.01" min="0" placeholder="0,00" />
+        <label>Valor (R$) *
+          <input type="number" name="valor" step="0.01" min="0" placeholder="0,00" required />
         </label>
-        <button type="submit" class="btn btn--primary btn--block">Registrar corretiva</button>
+        <label>Anexo (orçamento / nota / certificação) *
+          <input type="file" name="anexo" accept="image/*,.pdf" required />
+        </label>
+        <button type="submit" class="btn btn--primary btn--block">Registrar lançamento</button>
       </form>
-
-      <h2 class="section-title">Lançamentos recentes (${lista.length})</h2>
-      <div class="list">
-        ${lista.length ? lista.slice(0, 30).map(itemCorretivaRow).join('') :
-          '<p class="empty-state">Nenhum lançamento ainda nesta unidade.</p>'}
-      </div>
     </main>`;
 }
 
-function itemCorretivaRow(r) {
-  const tempo = r['Tempo Parada (h)'];
-  return `<div class="list-row">
-    <div class="list-row__main">
-      <strong>${escapeHtml(r['Equipamento'] || '—')}</strong>
-      <span class="muted">${escapeHtml(r['Tipo'] || '')} · ${fmtDate(r['Data Início'])}${tempo ? ' · ' + fmtHoras(tempo) + ' parado' : ''}</span>
-    </div>
-    <div class="list-row__meta">
-      <span>${fmtMoney(r['Valor'])}</span>
-      <span>${escapeHtml(r['Responsável'] || '—')}</span>
-    </div>
-  </div>`;
-}
-
-function bindCorretivasForm() {
-  const form = document.getElementById('form-corretiva');
+function bindLancarManutencaoForm() {
+  const form = document.getElementById('form-manutencao');
   if (!form) return;
+
+  form.querySelectorAll('.segmented__btn').forEach(btn => {
+    btn.addEventListener('click', () => {
+      form.querySelectorAll('.segmented__btn').forEach(b => b.classList.remove('segmented__btn--ativo'));
+      btn.classList.add('segmented__btn--ativo');
+      form.tipo.value = btn.dataset.tipo;
+      form.tipoOutro.value = '';
+    });
+  });
+  form.tipoOutro.addEventListener('change', () => {
+    if (form.tipoOutro.value) {
+      form.querySelectorAll('.segmented__btn').forEach(b => b.classList.remove('segmented__btn--ativo'));
+    }
+  });
+
+  form.equipamentoSelect.addEventListener('change', () => {
+    const outroCampo = document.getElementById('campo-equipamento-outro');
+    const isOutro = form.equipamentoSelect.value === '__outro__';
+    outroCampo.hidden = !isOutro;
+    form.equipamentoOutro.required = isOutro;
+  });
 
   function atualizarPreview() {
     const preview = document.getElementById('tempo-parado-corretiva');
@@ -792,37 +901,91 @@ function bindCorretivasForm() {
   form.addEventListener('submit', async (e) => {
     e.preventDefault();
     const s = Session.get();
-    if (form.dataFim.value && new Date(form.dataFim.value) < new Date(form.dataInicio.value)) {
+    if (new Date(form.dataFim.value) < new Date(form.dataInicio.value)) {
       toast('A data/hora de fim não pode ser antes do início.', 'erro');
+      return;
+    }
+    const equipamento = form.equipamentoSelect.value === '__outro__'
+      ? form.equipamentoOutro.value.trim()
+      : form.equipamentoSelect.value;
+    if (!equipamento) {
+      toast('Escolha (ou digite) o equipamento/local.', 'erro');
       return;
     }
     const btn = form.querySelector('button[type="submit"]');
     btn.disabled = true;
     btn.textContent = 'Salvando...';
     try {
+      const anexo = await fileParaBase64(form.anexo);
+      if (!anexo.base64) throw new Error('Anexe o orçamento/comprovante/certificação (campo obrigatório).');
       await Api.criarCorretiva({
         unidade: s.unidade,
         classificacao: form.classificacao.value,
-        tipo: form.tipo.value,
-        equipamento: form.equipamento.value.trim(),
+        tipo: form.tipoOutro.value || form.tipo.value,
+        equipamento: equipamento,
         responsavel: form.responsavel.value.trim(),
         dataInicio: form.dataInicio.value,
-        dataFim: form.dataFim.value || '',
+        dataFim: form.dataFim.value,
         descricao: form.descricao.value.trim(),
-        valor: form.valor.value || 0,
+        valor: form.valor.value,
+        anexoBase64: anexo.base64,
+        anexoNome: anexo.nome,
+        registradoPor: s.nome || '',
       });
       Cache.clear();
-      toast('Manutenção corretiva registrada!', 'sucesso');
+      toast('Manutenção registrada!', 'sucesso');
       form.reset();
-      const current = window.location.hash;
       window.location.hash = '#/menu';
-      setTimeout(() => { window.location.hash = current; }, 0);
     } catch (err) {
       toast(err.message || 'Erro ao salvar.', 'erro');
       btn.disabled = false;
-      btn.textContent = 'Registrar corretiva';
+      btn.textContent = 'Registrar lançamento';
     }
   });
+}
+
+// ---------------------------------------------------------------------
+// Telas: Manutenções Corretivas / Preventivas (listagem, cada uma na sua
+// aba — o lançamento de ambas acontece na tela única acima)
+// ---------------------------------------------------------------------
+
+async function screenListaManutencoes(tipoFiltro) {
+  const s = Session.get();
+  const isPrev = tipoFiltro === 'PREVENTIVA';
+  const titulo = isPrev ? 'Manutenções Preventivas (com custo)' : 'Manutenções Corretivas';
+  let lista;
+  try {
+    lista = await Api.custos(s.unidade, { tipo: tipoFiltro });
+  } catch (err) {
+    return `${header(titulo, { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
+  }
+
+  return `
+    ${header(titulo, { back: '#/menu' })}
+    <main class="container">
+      <button class="btn btn--primary btn--block" data-nav="#/manutencoes">+ Lançar ${isPrev ? 'preventiva' : 'corretiva'}</button>
+      <h2 class="section-title">Lançamentos (${lista.length})</h2>
+      <div class="list">
+        ${lista.length ? lista.map(itemCorretivaRow).join('') :
+          `<p class="empty-state">Nenhum lançamento de ${isPrev ? 'preventiva' : 'corretiva'} ainda nesta unidade.</p>`}
+      </div>
+    </main>`;
+}
+
+function itemCorretivaRow(r) {
+  const tempo = r['Tempo Parada (h)'];
+  const anexo = r['Anexo'];
+  return `<div class="list-row">
+    <div class="list-row__main">
+      <strong>${escapeHtml(r['Equipamento'] || '—')}</strong>
+      <span class="muted">${escapeHtml(r['Tipo'] || '')} · ${fmtDate(r['Data Início'])}${tempo ? ' · ' + fmtHoras(tempo) + ' parado' : ''}${r['Registrado Por'] ? ' · por ' + escapeHtml(r['Registrado Por']) : ''}</span>
+    </div>
+    <div class="list-row__meta">
+      <span>${fmtMoney(r['Valor'])}</span>
+      <span>${escapeHtml(r['Responsável'] || '—')}</span>
+      ${anexo ? `<a href="${escapeHtml(anexo)}" target="_blank" rel="noopener" class="anexo-link">📎 Anexo</a>` : ''}
+    </div>
+  </div>`;
 }
 
 // ---------------------------------------------------------------------
@@ -868,14 +1031,16 @@ function itemHistoricoRow(r) {
   const tempo = r['Tempo Parada (h)'];
   const nome = r['Equipamento / Estrutura'] || '—';
   const ano = r['Data da Realização'] ? r['Data da Realização'].slice(0, 4) : '';
+  const anexo = r['Documento / Anexo'];
   return `<div class="list-row" data-nome="${escapeHtml(nome.toLowerCase())}" data-classificacao="${escapeHtml(r['Classificação'] || '')}" data-ano="${ano}">
     <div class="list-row__main">
       <strong>${escapeHtml(nome)}</strong>
-      <span class="muted">${escapeHtml(r['Classificação'] || '')} · ${fmtDate(r['Data da Realização'])}${tempo ? ' · ' + fmtHoras(tempo) + ' parado' : ''}</span>
+      <span class="muted">${escapeHtml(r['Classificação'] || '')} · ${fmtDate(r['Data da Realização'])}${tempo ? ' · ' + fmtHoras(tempo) + ' parado' : ''}${r['Registrado Por'] ? ' · por ' + escapeHtml(r['Registrado Por']) : ''}</span>
     </div>
     <div class="list-row__meta">
       <span>${escapeHtml(r['Prestadora'] || '—')}</span>
       <span>${escapeHtml(r['Serviço Realizado'] || '')}</span>
+      ${anexo ? `<a href="${escapeHtml(anexo)}" target="_blank" rel="noopener" class="anexo-link">📎 Certificação</a>` : ''}
     </div>
   </div>`;
 }
@@ -937,24 +1102,30 @@ async function screenDashboardCustos() {
   const cardsPorUnidade = todas
     ? `<div class="custo-card-grid">
         <div class="custo-card custo-card--total">
-          <h3>Corporativo (3 unidades)</h3>
+          <h3>🏢 Corporativo (3 unidades)</h3>
           <div class="custo-card__grid">
             <div><span class="muted">Budget</span><strong>${fmtMoney(d.budgetTotal)}</strong></div>
             <div><span class="muted">Gasto</span><strong class="cor-gasto">${fmtMoney(d.gastoTotal)}</strong></div>
             <div><span class="muted">Saldo</span><strong class="${d.saldoTotal >= 0 ? 'cor-saldo-ok' : 'cor-saldo-neg'}">${fmtMoney(d.saldoTotal)}</strong></div>
           </div>
         </div>
-        ${d.porUnidade.map(u => blocoUnidade(u.unidade, u.budget, u.gasto, u.saldo)).join('')}
+        ${d.porUnidade.map(u => blocoUnidade('📍 ' + u.unidade, u.budget, u.gasto, u.saldo)).join('')}
       </div>`
     : `<div class="custo-card-grid">${blocoUnidade(s.unidade, d.budget, d.gasto, d.saldo)}</div>`;
+
+  const graficoPorUnidade = todas
+    ? `<h2 class="section-title">Gasto por unidade</h2>
+       ${barList((d.custoPorUnidade || []).map(u => ({ label: u.unidade, value: u.valor })), { fmt: fmtMoney, vazio: 'Sem lançamentos ainda.' })}`
+    : '';
 
   return `
     ${header('Gastos e Budget' + (todas ? ' — todas as unidades' : ''), { back: '#/menu' })}
     <main class="container">
       ${cardsPorUnidade}
+      ${graficoPorUnidade}
 
       <h2 class="section-title">Custo por tipo de manutenção</h2>
-      ${barList(porTipo, { fmt: fmtMoney, vazio: 'Sem lançamentos de custo ainda.' })}
+      ${barList(porTipo, { fmt: fmtMoney, vazio: 'Sem lançamentos de custo ainda. Lançamentos de preventiva com valor (tela "Lançar Manutenção") também entram aqui.' })}
 
       <h2 class="section-title">Evolução mensal de custos</h2>
       ${barList(evolucao, { fmt: fmtMoney, vazio: 'Sem lançamentos com data ainda.' })}
@@ -975,6 +1146,19 @@ async function screenDashboardTempoOcioso() {
     return `${header('Tempo Ocioso', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
 
+  const graficoPorUnidade = todas
+    ? `<h2 class="section-title">Tempo parado por unidade</h2>
+       ${barList((d.porUnidade || []).map(u => ({ label: u.unidade, value: u.horasTotal })), { fmt: fmtHoras, vazio: 'Sem paradas registradas ainda.' })}
+       <div class="kpi-grid kpi-grid--compacto">
+         ${(d.porUnidade || []).map(u => `
+           <div class="kpi-card">
+             <span class="kpi-card__label">📍 ${escapeHtml(u.unidade)}</span>
+             <span class="kpi-card__value">${fmtHoras(u.horasTotal)}</span>
+             <span class="kpi-card__sub">${u.totalEquipamentosParados} equip. · ${u.totalRecorrentes} recorrente${u.totalRecorrentes === 1 ? '' : 's'}</span>
+           </div>`).join('')}
+       </div>`
+    : '';
+
   return `
     ${header('Tempo Ocioso' + (todas ? ' — todas as unidades' : ''), { back: '#/menu' })}
     <main class="container">
@@ -992,6 +1176,8 @@ async function screenDashboardTempoOcioso() {
           <span class="kpi-card__value">${d.totalRecorrentes}</span>
         </div>
       </section>
+
+      ${graficoPorUnidade}
 
       <h2 class="section-title">Por equipamento</h2>
       <div class="list">

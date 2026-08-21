@@ -20,6 +20,20 @@ const SHEETS = {
 
 const UNIDADES = ['Macatuba', 'Jundiaí I', 'Jundiaí II'];
 
+// Usuários fixos do app (login = escolher o nome, sem senha). "unidade":
+// 'geral' significa que a pessoa pode escolher qualquer unidade (ou
+// "Todas as unidades") ao entrar; para os demais, a unidade já vem
+// pré-selecionada (mas continua editável, caso a pessoa precise trocar).
+const USUARIOS = [
+  { nome: 'Eduardo Dirolli', unidade: 'geral' },
+  { nome: 'Ricardo Augusto', unidade: 'geral' },
+  { nome: 'Lucas Gomes', unidade: 'geral' },
+  { nome: 'Jesiel Ricardo', unidade: 'Jundiaí II' },
+  { nome: 'Guilherme Henrique', unidade: 'Jundiaí I' },
+  { nome: 'Matheus Martins', unidade: 'Jundiaí I' },
+  { nome: 'Daniely Villaça', unidade: 'Jundiaí II' },
+];
+
 const CLASSIFICACOES = ['EQUIPAMENTOS', 'PREDIAL'];
 
 // Orcamento aceita também "GERAL" — usado quando a unidade ainda não tem o
@@ -76,11 +90,13 @@ const COLS = {
     'ID_Historico', 'Unidade', 'Data da Realização', 'Data Fim',
     'Tempo Parada (h)', 'Classificação', 'Equipamento / Estrutura',
     'Prestadora', 'Serviço Realizado', 'Valor', 'Documento / Anexo',
+    'Registrado Por',
   ],
   MANUTENCOES: [
     'ID_Manutencao', 'Unidade', 'Data Início', 'Data Fim',
     'Tempo Parada (h)', 'Responsável', 'Classificação', 'Tipo',
     'Equipamento', 'Descrição do Serviço', 'Valor', 'Anexo',
+    'Registrado Por',
   ],
   ORCAMENTO: ['Unidade', 'Classificação', 'Ano', 'Budget Anual'],
 };

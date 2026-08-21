@@ -17,40 +17,41 @@ URL da API pra funcionar.
 
 ---
 
-## 0) Já tenho a Fase 1 no ar — como atualizo pra Fase 2?
+## 0) Já tenho o app no ar — como atualizo pra Fase 3?
 
-Boa notícia: nenhum arquivo novo foi criado, nem a URL da API nem a do app
-mudam. É só substituir o **conteúdo** de arquivos que já existem, nos
-mesmos lugares de sempre:
+Mesma lógica de sempre: nenhum arquivo novo, nenhuma URL muda. É só
+substituir o **conteúdo** de arquivos que já existem, nos mesmos lugares:
 
 **Na planilha (Apps Script)** — substitua o conteúdo destes 5 arquivos
 pelos novos (mesmo nome, mesmo lugar — apague tudo que tem dentro de cada
 um e cole o novo conteúdo por cima):
-`00_Config.js`, `01_Setup.js`, `02_Cadastro.js`, `03_Historico.js`,
-`07_WebApp.js`. Depois:
+`00_Config.js`, `01_Setup.js`, `03_Historico.js`, `07_WebApp.js` (e
+`02_Cadastro.js`, se eu tiver avisado que ele mudou nesta rodada). Depois:
 
 1. Salve (Ctrl+S)
 2. No menu **🔧 Gestão de Manutenção**, rode de novo **"1) Configurar
-   planilha"** — isso cria a aba nova **Orcamento** (com os valores de
-   budget que você mandou por print, já preenchidos) sem mexer em nada que
-   já existia
+   planilha"** — isso adiciona a coluna nova **Registrado Por** em
+   `Historico_Preventivas` e `Manutencoes_Custos`, sem apagar nada que já
+   existia (é seguro rodar de novo quantas vezes precisar)
 3. **Implantar → Gerenciar implantações** → ícone de lápis na implantação
-   existente → **Nova versão** → **Implantar** (a URL continua a mesma,
-   não precisa mudar nada no app)
+   existente → **Nova versão** → **Implantar** (a URL continua a mesma)
+4. Na **primeira vez** que a API rodar depois dessa atualização, o Google
+   vai pedir autorização de novo (aparece ao tentar usar o app, ou você
+   pode forçar rodando qualquer função pelo editor do Apps Script) — é
+   porque a Fase 3 passou a usar o **Google Drive** para guardar os
+   anexos. É a sua própria planilha pedindo permissão pra criar arquivos
+   no seu Drive; aceite normalmente.
 
-**No GitHub (app)** — substitua o conteúdo destes 4 arquivos, do mesmo
-jeito que você já fez (arrastando pra a página de upload do GitHub, ou
-editando direto pelo GitHub Desktop): `docs/app/js/app.js`,
-`docs/app/js/api.js`, `docs/app/css/style.css`, `docs/app/sw.js`. Não mexa
-em `docs/app/js/config.js` — ele já está com a sua URL certa. Depois de
+**No GitHub (app)** — substitua o conteúdo destes 4 arquivos:
+`docs/app/js/app.js`, `docs/app/css/style.css`, `docs/app/sw.js`, e
+opcionalmente `docs/app/js/api.js` se eu avisar que mudou. Não mexa em
+`docs/app/js/config.js` — ele já está com a sua URL certa. Depois de
 subir, espera 1-2 minutos e testa o link de sempre.
 
-**Ajuste manual que só você consegue fazer**: na aba **Orcamento**, o
-budget de Jundiaí II entrou como uma linha só ("GERAL", R$100.000) porque
-no print que você mandou ele não vinha separado por Equipamentos/Predial
-como Macatuba e Jundiaí I. Se você tiver esse valor separado, é só apagar
-a linha "GERAL" e adicionar duas linhas novas (uma "EQUIPAMENTOS", uma
-"PREDIAL") — o app recalcula sozinho.
+**Sobre a lista de nomes (login)**: os nomes fixos (Eduardo, Ricardo,
+Lucas, Jesiel, Guilherme, Matheus, Daniely) estão em `00_Config.js`
+(`USUARIOS`) — se alguém entrar ou sair da equipe, me fala que eu ajusto
+essa lista pra você.
 
 ---
 
@@ -142,13 +143,21 @@ window.APP_CONFIG = {
 6. Marque uma preventiva de **equipamento** como realizada — deve pedir
    Data/Hora Início e Fim, mostrar o tempo parado calculado antes de você
    confirmar, e o registro deve aparecer em `Historico_Preventivas` com
-   `Data Fim` e `Tempo Parada (h)` preenchidos.
-7. Registre uma **Manutenção Corretiva** de teste e confira se apareceu em
-   `Manutencoes_Custos`.
-8. Abra o **Dashboard de Gastos** — confira se os valores de Budget batem
-   com o que está na aba `Orcamento`.
-9. Na tela de entrada, escolha **"Todas as unidades"** — deve aparecer só
-   o menu com os 2 dashboards (sem cadastro).
+   `Data Fim`, `Tempo Parada (h)` e `Registrado Por` preenchidos.
+7. Em **Lançar Manutenção**, registre uma **Corretiva** de teste (escolha
+   o equipamento na lista, preencha início/fim/valor e anexe qualquer
+   arquivo) — confira se apareceu em **Manutenções Corretivas** e em
+   `Manutencoes_Custos`, com o link do anexo funcionando.
+8. Repita o passo 7 escolhendo **Preventiva** no seletor — confira se
+   apareceu em **Manutenções Preventivas** (não em Corretivas).
+9. Abra o **Dashboard de Gastos** — confira se os valores de Budget batem
+   com o que está na aba `Orcamento`, e se "Custo por tipo de manutenção"
+   já mostra PREVENTIVA (com o valor do passo 8).
+10. No **Menu Principal**, clique num status (ex: "atrasada") — deve abrir
+    a lista de preventivas já filtrada por esse status.
+11. Na tela de entrada, escolha **"Todas as unidades"** — deve aparecer só
+    o menu com os 2 dashboards (sem cadastro), e cada um deve mostrar o
+    gráfico comparando as 3 unidades.
 
 Se algo não aparecer, abra o Console do navegador (F12 → Console) — os
 erros da API aparecem lá com a mensagem exata (ex: token inválido, campo

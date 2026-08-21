@@ -226,10 +226,21 @@ input:focus, select:focus, textarea:focus {
   align-items: center;
   gap: 5px;
   padding: 6px 10px;
+  border: none;
   border-radius: 999px;
   font-size: .78rem;
   font-weight: 600;
   background: var(--cinza-bg);
+  color: inherit;
+  transition: transform .1s ease, filter .15s ease;
+}
+
+.status-pill:hover { filter: brightness(.96); }
+.status-pill:active { transform: scale(.97); }
+
+.status-strip__dica {
+  font-size: .72rem;
+  margin: -14px 0 18px;
 }
 
 .status-pill--em_dia { background: var(--verde-bg); color: #14532d; }
@@ -237,6 +248,45 @@ input:focus, select:focus, textarea:focus {
 .status-pill--para_hoje { background: var(--laranja-bg); color: #7c2d12; }
 .status-pill--atrasada { background: var(--vermelho-bg); color: #7f1d1d; }
 .status-pill--pendente { background: var(--cinza-bg); color: #374151; }
+
+/* Anexos --------------------------------------------------------------*/
+
+.anexo-link {
+  color: var(--azul);
+  text-decoration: underline;
+  font-size: .78rem;
+  font-weight: 600;
+}
+
+/* Seletor segmentado (tipo de lançamento) ------------------------------*/
+
+.segmented {
+  display: flex;
+  gap: 8px;
+  margin: 4px 0 14px;
+}
+
+.segmented__btn {
+  flex: 1;
+  padding: 10px;
+  border: 1px solid var(--borda);
+  border-radius: var(--raio);
+  background: var(--branco);
+  font-weight: 600;
+  font-size: .9rem;
+  color: var(--texto-muted);
+}
+
+.segmented__btn--ativo {
+  background: var(--azul);
+  border-color: var(--azul);
+  color: #fff;
+}
+
+.kpi-grid--compacto {
+  grid-template-columns: repeat(2, 1fr);
+  margin-top: 4px;
+}
 
 .section-title {
   font-size: .95rem;

@@ -14,17 +14,20 @@ const SHEETS = {
   HISTORICO: 'Historico_Preventivas',
   MANUTENCOES: 'Manutencoes_Custos',
   ORCAMENTO: 'Orcamento',
+  USUARIOS: 'Usuarios',
   DASH_DATA: 'Dashboard_Data',
   DASHBOARD: 'Dashboard',
 };
 
 const UNIDADES = ['Macatuba', 'Jundiaí I', 'Jundiaí II'];
 
-// Usuários fixos do app (login = escolher o nome, sem senha). "unidade":
-// 'geral' significa que a pessoa pode escolher qualquer unidade (ou
-// "Todas as unidades") ao entrar; para os demais, a unidade já vem
-// pré-selecionada (mas continua editável, caso a pessoa precise trocar).
-const USUARIOS = [
+// Lista de usuários — usada só como SEMENTE inicial da aba "Usuarios" na
+// planilha (Nome, Unidade) na primeira vez que "Configurar planilha" roda.
+// Depois disso, quem manda é a aba: pra adicionar/remover/editar alguém,
+// edite direto lá — não precisa mexer em código. "unidade": 'geral'
+// significa que a pessoa pode escolher qualquer unidade (ou "Todas as
+// unidades") ao entrar; para os demais, a unidade já vem pré-selecionada.
+const USUARIOS_SEED = [
   { nome: 'Eduardo Dirolli', unidade: 'geral' },
   { nome: 'Ricardo Augusto', unidade: 'geral' },
   { nome: 'Lucas Gomes', unidade: 'geral' },
@@ -71,20 +74,24 @@ const COLS = {
   CADASTRO_EQUIP: [
     'ID_Equipamento', 'Unidade', 'Ativo / Patrimônio', 'Equipamento', 'Tipo',
     'Frequência Preventiva', 'Fornecedor Padrão', 'Data de Cadastro',
+    'Cadastro Ativo',
   ],
   CADASTRO_ARMAZEM: [
     'ID_Estrutura', 'Unidade', 'Categoria', 'Descrição', 'Prestador',
     'Criticidade', 'Frequência', 'Data de Cadastro',
+    'Cadastro Ativo',
   ],
   PREV_EQUIP: [
     'ID_Preventiva', 'ID_Equipamento', 'Unidade', 'Equipamento', 'Tipo',
     'Fornecedor', 'Frequência', 'Última Preventiva', 'Dias Restantes',
     'Próxima Preventiva', 'Status', 'Observação', 'Orçamento / Anexo',
+    'Anexo Negociação', 'Cadastro Ativo',
   ],
   PREV_ARMAZEM: [
     'ID_Preventiva', 'ID_Estrutura', 'Unidade', 'Equipamento / Estrutura',
     'Frequência', 'Responsável', 'Última Preventiva', 'Dias Restantes',
     'Próxima Preventiva', 'Status', 'Observação', 'Orçamento / Anexo',
+    'Anexo Negociação', 'Cadastro Ativo',
   ],
   HISTORICO: [
     'ID_Historico', 'Unidade', 'Data da Realização', 'Data Fim',
@@ -99,6 +106,7 @@ const COLS = {
     'Registrado Por',
   ],
   ORCAMENTO: ['Unidade', 'Classificação', 'Ano', 'Budget Anual'],
+  USUARIOS: ['Nome', 'Unidade'],
 };
 
 /**

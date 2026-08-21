@@ -61,9 +61,9 @@ function doGet(e) {
       case 'custos':
         return _json_({ ok: true, data: _listCustos_(params.unidade, params) });
       case 'dashboardCustos':
-        return _json_({ ok: true, data: _dashboardCustos_(params.unidade, params.ano) });
+        return _json_({ ok: true, data: _dashboardCustos_(params.unidade, params.ano, params.mes) });
       case 'dashboardTempoOcioso':
-        return _json_({ ok: true, data: _dashboardTempoOcioso_(params.unidade) });
+        return _json_({ ok: true, data: _dashboardTempoOcioso_(params.unidade, params.ano, params.mes) });
       case 'orcamento':
         return _json_({ ok: true, data: _rowsAsObjects_(SHEETS.ORCAMENTO) });
       default:
@@ -99,10 +99,14 @@ function doPost(e) {
         return _json_({ ok: true, data: _criarEquipamento_(payload) });
       case 'criarEstrutura':
         return _json_({ ok: true, data: _criarEstrutura_(payload) });
+      case 'excluirCadastro':
+        return _json_({ ok: true, data: _excluirCadastro_(payload) });
       case 'marcarPreventivaRealizada':
         return _json_({ ok: true, data: _marcarPreventivaRealizada_(payload) });
       case 'criarCorretiva':
         return _json_({ ok: true, data: _criarCorretiva_(payload) });
+      case 'editarPreventiva':
+        return _json_({ ok: true, data: _editarPreventiva_(payload) });
       default:
         return _json_({ ok: false, erro: 'Ação desconhecida: "' + action + '".' }, 400);
     }
@@ -156,8 +160,23 @@ function _configLists_() {
     tiposManutencao: TIPOS_MANUTENCAO,
     criticidades: CRITICIDADES,
     frequencias: FREQUENCIAS,
-    usuarios: USUARIOS,
+    usuarios: _listUsuarios_(),
   };
+}
+
+/**
+ * Lê a lista de usuários (login) direto da aba Usuarios — Lucas edita essa
+ * aba (adiciona/remove/renomeia linha) sem precisar mexer em código. Se a
+ * aba ainda não existir (planilha não atualizada pra essa versão), cai de
+ * volta na lista fixa USUARIOS_SEED pra não travar o login.
+ */
+function _listUsuarios_() {
+  const sheet = SpreadsheetApp.getActiveSpreadsheet().getSheetByName(SHEETS.USUARIOS);
+  if (!sheet) return USUARIOS_SEED;
+  const rows = _rowsAsObjects_(SHEETS.USUARIOS)
+    .filter(r => r['Nome'])
+    .map(r => ({ nome: String(r['Nome']).trim(), unidade: String(r['Unidade'] || 'geral').trim() }));
+  return rows.length ? rows : USUARIOS_SEED;
 }
 
 /** Lê uma aba inteira e devolve um array de objetos {Cabecalho: valor}, usando os nomes de coluna reais da aba (linha 1). */
@@ -193,21 +212,26 @@ function _filterByUnidade_(rows, unidade) {
   return rows.filter(r => r['Unidade'] === unidade);
 }
 
+/** Tira as linhas excluídas (soft delete via coluna "Cadastro Ativo" = false). Em branco/ausente conta como ativo. */
+function _apenasAtivos_(rows) {
+  return rows.filter(r => r['Cadastro Ativo'] !== false && r['Cadastro Ativo'] !== 'FALSE');
+}
+
 function _listEquipamentos_(unidade) {
-  return _filterByUnidade_(_rowsAsObjects_(SHEETS.CADASTRO_EQUIP), unidade);
+  return _apenasAtivos_(_filterByUnidade_(_rowsAsObjects_(SHEETS.CADASTRO_EQUIP), unidade));
 }
 
 function _listEstruturas_(unidade) {
-  return _filterByUnidade_(_rowsAsObjects_(SHEETS.CADASTRO_ARMAZEM), unidade);
+  return _apenasAtivos_(_filterByUnidade_(_rowsAsObjects_(SHEETS.CADASTRO_ARMAZEM), unidade));
 }
 
 function _listPreventivasEquipamentos_(unidade) {
-  const rows = _filterByUnidade_(_rowsAsObjects_(SHEETS.PREV_EQUIP), unidade);
+  const rows = _apenasAtivos_(_filterByUnidade_(_rowsAsObjects_(SHEETS.PREV_EQUIP), unidade));
   return rows.map(r => _comStatus_(r));
 }
 
 function _listPreventivasArmazem_(unidade) {
-  const rows = _filterByUnidade_(_rowsAsObjects_(SHEETS.PREV_ARMAZEM), unidade);
+  const rows = _apenasAtivos_(_filterByUnidade_(_rowsAsObjects_(SHEETS.PREV_ARMAZEM), unidade));
   return rows.map(r => _comStatus_(r));
 }
 
@@ -380,6 +404,49 @@ function _criarEstrutura_(payload) {
 }
 
 /**
+ * Exclui (soft delete) um equipamento ou item de armazém: marca "Cadastro
+ * Ativo" = false na linha do Cadastro E na linha correspondente das abas
+ * fixas de Preventivas (achada pelo ID_Equipamento/ID_Estrutura) — assim
+ * ele some das duas listas e do dropdown de "Lançar Manutenção" de uma
+ * vez só. Não apaga a linha nem mexe em Historico_Preventivas ou
+ * Manutencoes_Custos — o que já foi registrado continua no histórico
+ * normalmente, só o cadastro ativo é que some.
+ */
+function _excluirCadastro_(payload) {
+  _requireFields_(payload, ['tipo', 'id']);
+  const tipo = payload.tipo;
+  if (tipo !== 'equipamento' && tipo !== 'armazem') {
+    throw new Error('"tipo" deve ser "equipamento" ou "armazem".');
+  }
+
+  const cadastroSheet = tipo === 'equipamento' ? SHEETS.CADASTRO_EQUIP : SHEETS.CADASTRO_ARMAZEM;
+  const cadastroIdHeader = tipo === 'equipamento' ? 'ID_Equipamento' : 'ID_Estrutura';
+  const prevSheet = tipo === 'equipamento' ? SHEETS.PREV_EQUIP : SHEETS.PREV_ARMAZEM;
+
+  const cadRow = _marcarInativo_(cadastroSheet, cadastroIdHeader, payload.id);
+  if (!cadRow) throw new Error('Cadastro não encontrado: ' + payload.id);
+  _marcarInativo_(prevSheet, cadastroIdHeader, payload.id); // mesma coluna de ID nas duas abas
+
+  SpreadsheetApp.flush();
+  return { ok: true, id: payload.id };
+}
+
+/** Acha a linha com `idValue` em `idHeader` na aba `sheetName` e marca "Cadastro Ativo" = false. Devolve a linha (número) ou null se não achou. */
+function _marcarInativo_(sheetName, idHeader, idValue) {
+  const sheet = getSheet_(sheetName);
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) return null;
+  const idCol = colIndex(sheetName, idHeader);
+  const ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues().flat();
+  const idx = ids.indexOf(idValue);
+  if (idx === -1) return null;
+  const row = idx + 2;
+  const ativoCol = colIndex(sheetName, 'Cadastro Ativo');
+  sheet.getRange(row, ativoCol).setValue(false);
+  return row;
+}
+
+/**
  * Marca uma preventiva (equipamento ou armazém) como realizada: grava a
  * data em "Última Preventiva" (o que recalcula Dias Restantes/Status
  * automaticamente, pois são fórmulas) e cria o registro correspondente em
@@ -460,6 +527,62 @@ function _marcarPreventivaRealizada_(payload) {
       anexo: anexoUrl,
       registradoPor: payload.registradoPor || '',
     });
+  }
+  SpreadsheetApp.flush();
+
+  const atualizado = _rowsAsObjects_(sheetName).find(r => r._linha === row);
+  return _comStatus_(atualizado || { _linha: row });
+}
+
+/**
+ * Altera uma preventiva SEM marcá-la como realizada — dois usos possíveis,
+ * que podem vir junto ou separados no mesmo request:
+ *  (a) "novaProximaData": reagenda manualmente a Próxima Preventiva (ex: o
+ *      prestador remarcou a visita) — sobrescreve direto a célula, que
+ *      normalmente é fórmula; a partir daí ela fica "fixa" até a próxima
+ *      vez que a preventiva for marcada como realizada (o que recalcula
+ *      Última Preventiva e reescreve a fórmula de novo).
+ *  (b) "anexoBase64": anexa um documento (ex: orçamento em negociação)
+ *      sem mexer em nenhuma data — fica salvo na coluna "Anexo Negociação"
+ *      e visível na lista do app, pra acompanhamento.
+ */
+function _editarPreventiva_(payload) {
+  _requireFields_(payload, ['tipo', 'idPreventiva']);
+  const tipo = payload.tipo;
+  if (tipo !== 'equipamento' && tipo !== 'armazem') {
+    throw new Error('"tipo" deve ser "equipamento" ou "armazem".');
+  }
+  if (!payload.novaProximaData && !payload.anexoBase64) {
+    throw new Error('Informe uma nova data ou um anexo — nenhum dos dois veio.');
+  }
+
+  const sheetName = tipo === 'equipamento' ? SHEETS.PREV_EQUIP : SHEETS.PREV_ARMAZEM;
+  const sheet = getSheet_(sheetName);
+  const idCol = colIndex(sheetName, 'ID_Preventiva');
+  const lastRow = sheet.getLastRow();
+  if (lastRow < 2) throw new Error('Nenhuma preventiva cadastrada em ' + sheetName + '.');
+
+  const ids = sheet.getRange(2, idCol, lastRow - 1, 1).getValues().flat();
+  const idx = ids.indexOf(payload.idPreventiva);
+  if (idx === -1) throw new Error('Preventiva não encontrada: ' + payload.idPreventiva);
+  const row = idx + 2;
+
+  if (payload.novaProximaData) {
+    const proximaCol = colIndex(sheetName, 'Próxima Preventiva');
+    sheet.getRange(row, proximaCol).setValue(new Date(payload.novaProximaData)).setNumberFormat('dd/mm/yyyy');
+  }
+
+  if (payload.anexoBase64) {
+    const unidadeCol = colIndex(sheetName, 'Unidade');
+    const unidade = sheet.getRange(row, unidadeCol).getValue();
+    const anexoUrl = _salvarAnexo_(payload.anexoBase64, payload.anexoNome, unidade);
+    const anexoCol = colIndex(sheetName, 'Anexo Negociação');
+    sheet.getRange(row, anexoCol).setValue(anexoUrl);
+  }
+
+  if (payload.observacao !== undefined) {
+    const obsCol = colIndex(sheetName, 'Observação');
+    sheet.getRange(row, obsCol).setValue(payload.observacao);
   }
   SpreadsheetApp.flush();
 
@@ -608,6 +731,17 @@ function _agruparPorTipo_(rows) {
   return Object.values(map).sort((a, b) => b.valor - a.valor);
 }
 
+function _agruparPorEquipamento_(rows) {
+  const map = {};
+  rows.forEach(r => {
+    const nome = r['Equipamento'] || '—';
+    if (!map[nome]) map[nome] = { equipamento: nome, valor: 0, quantidade: 0 };
+    map[nome].valor += Number(r['Valor']) || 0;
+    map[nome].quantidade++;
+  });
+  return Object.values(map).sort((a, b) => b.valor - a.valor);
+}
+
 function _agruparPorMes_(rows) {
   const map = {};
   rows.forEach(r => {
@@ -630,27 +764,40 @@ function _saldoDe_(budget, gasto) {
 
 /**
  * Dashboard de gastos de uma unidade (budget / gasto / saldo, separado por
- * Equipamentos e Predial, mais custo por tipo e evolução mensal). Com
- * unidade = 'Todas', devolve o mesmo, por unidade, mais os totais
- * consolidados (equivalente ao "Budget Corporativo" do dashboard antigo).
+ * Equipamentos e Predial, mais custo por tipo, por equipamento e evolução
+ * mensal). Com unidade = 'Todas', devolve o mesmo, por unidade, mais os
+ * totais consolidados (equivalente ao "Budget Corporativo" do dashboard
+ * antigo). `mesParam` (01-12), se vier, filtra custoPorTipo/custoPorEquipamento
+ * pra só aquele mês do ano escolhido — Budget/Saldo continuam sempre pelo
+ * ano inteiro (o budget é anual, não faz sentido "por mês").
  */
-function _dashboardCustos_(unidadeParam, anoParam) {
+function _dashboardCustos_(unidadeParam, anoParam, mesParam) {
   const ano = anoParam || new Date().getFullYear();
+  const mes = mesParam ? String(mesParam).padStart(2, '0') : '';
   const isTodas = !unidadeParam || unidadeParam === 'Todas' || unidadeParam === 'Todos';
+
+  const filtroPeriodo = (r) => {
+    if (!r['Data Início']) return true; // sem data sempre entra (mesma regra do total)
+    if (_anoOf_(r['Data Início']) !== String(ano)) return false;
+    if (mes && _mesOf_(r['Data Início']) !== mes) return false;
+    return true;
+  };
 
   if (!isTodas) {
     const budget = _orcamentoUnidade_(unidadeParam, ano);
     const gasto = _gastoPorClassificacao_(unidadeParam, ano);
-    const rowsAno = _filterByUnidade_(_rowsAsObjects_(SHEETS.MANUTENCOES), unidadeParam)
-      .filter(r => !r['Data Início'] || _anoOf_(r['Data Início']) === String(ano));
+    const rowsAno = _filterByUnidade_(_rowsAsObjects_(SHEETS.MANUTENCOES), unidadeParam).filter(filtroPeriodo);
     return {
       unidade: unidadeParam,
       ano: ano,
+      mes: mes,
       budget: budget,
       gasto: gasto,
       saldo: _saldoDe_(budget, gasto),
       custoPorTipo: _agruparPorTipo_(rowsAno),
-      evolucaoMensal: _agruparPorMes_(rowsAno),
+      custoPorEquipamento: _agruparPorEquipamento_(rowsAno),
+      evolucaoMensal: _agruparPorMes_(_filterByUnidade_(_rowsAsObjects_(SHEETS.MANUTENCOES), unidadeParam)
+        .filter(r => !r['Data Início'] || _anoOf_(r['Data Início']) === String(ano))),
     };
   }
 
@@ -662,19 +809,22 @@ function _dashboardCustos_(unidadeParam, anoParam) {
 
   const budgetTotal = porUnidade.reduce((s, u) => s + u.budget.total, 0);
   const gastoTotal = porUnidade.reduce((s, u) => s + u.gasto.total, 0);
-  const todasRows = _rowsAsObjects_(SHEETS.MANUTENCOES)
+  const todasRowsAno = _rowsAsObjects_(SHEETS.MANUTENCOES)
     .filter(r => !r['Data Início'] || _anoOf_(r['Data Início']) === String(ano));
+  const todasRowsPeriodo = todasRowsAno.filter(filtroPeriodo);
 
   return {
     unidade: 'Todas',
     ano: ano,
+    mes: mes,
     budgetTotal: budgetTotal,
     gastoTotal: gastoTotal,
     saldoTotal: budgetTotal - gastoTotal,
     porUnidade: porUnidade,
     custoPorUnidade: porUnidade.map(u => ({ unidade: u.unidade, valor: u.gasto.total })),
-    custoPorTipo: _agruparPorTipo_(todasRows),
-    evolucaoMensal: _agruparPorMes_(todasRows),
+    custoPorTipo: _agruparPorTipo_(todasRowsPeriodo),
+    custoPorEquipamento: _agruparPorEquipamento_(todasRowsPeriodo),
+    evolucaoMensal: _agruparPorMes_(todasRowsAno),
   };
 }
 
@@ -684,29 +834,43 @@ function _dashboardCustos_(unidadeParam, anoParam) {
 
 /**
  * Junta os eventos de parada de equipamento (preventivas com início/fim +
- * corretivas) e agrupa por equipamento: horas totais paradas e se é
- * recorrente (parou mais de uma vez). Com unidade = 'Todas', agrupa também
- * por unidade (dois equipamentos com o mesmo nome em unidades diferentes
- * contam separado).
+ * corretivas) e agrupa por equipamento: quantas manutenções/paradas, horas
+ * totais paradas, data da última parada, e se é recorrente (parou mais de
+ * uma vez). Com unidade = 'Todas', agrupa também por unidade (dois
+ * equipamentos com o mesmo nome em unidades diferentes contam separado).
+ * `mesParam` (01-12) + `anoParam`, se vierem, filtram pelos eventos cuja
+ * data de início caiu naquele mês/ano.
  */
-function _dashboardTempoOcioso_(unidadeParam) {
+function _dashboardTempoOcioso_(unidadeParam, anoParam, mesParam) {
   const isTodas = !unidadeParam || unidadeParam === 'Todas' || unidadeParam === 'Todos';
+  const ano = anoParam ? String(anoParam) : '';
+  const mes = mesParam ? String(mesParam).padStart(2, '0') : '';
+  const dentroDoPeriodo = (dataIso) => {
+    if (!ano && !mes) return true;
+    if (!dataIso) return false;
+    if (ano && _anoOf_(dataIso) !== ano) return false;
+    if (mes && _mesOf_(dataIso) !== mes) return false;
+    return true;
+  };
 
   const historico = _filterByUnidade_(_rowsAsObjects_(SHEETS.HISTORICO), unidadeParam)
     .filter(r => r['Classificação'] === 'EQUIPAMENTOS' && r['Tempo Parada (h)'] !== '' && r['Tempo Parada (h)'] != null)
-    .map(r => ({ equipamento: r['Equipamento / Estrutura'], unidade: r['Unidade'], horas: Number(r['Tempo Parada (h)']) || 0 }));
+    .filter(r => dentroDoPeriodo(r['Data da Realização']))
+    .map(r => ({ equipamento: r['Equipamento / Estrutura'], unidade: r['Unidade'], horas: Number(r['Tempo Parada (h)']) || 0, data: r['Data da Realização'] }));
 
   const custos = _filterByUnidade_(_rowsAsObjects_(SHEETS.MANUTENCOES), unidadeParam)
     .filter(r => r['Classificação'] === 'EQUIPAMENTOS' && r['Tempo Parada (h)'] !== '' && r['Tempo Parada (h)'] != null)
-    .map(r => ({ equipamento: r['Equipamento'], unidade: r['Unidade'], horas: Number(r['Tempo Parada (h)']) || 0 }));
+    .filter(r => dentroDoPeriodo(r['Data Início']))
+    .map(r => ({ equipamento: r['Equipamento'], unidade: r['Unidade'], horas: Number(r['Tempo Parada (h)']) || 0, data: r['Data Início'] }));
 
   const eventos = historico.concat(custos);
   const map = {};
   eventos.forEach(ev => {
     const key = (ev.equipamento || '—') + '|' + ev.unidade;
-    if (!map[key]) map[key] = { equipamento: ev.equipamento, unidade: ev.unidade, horasTotal: 0, ocorrencias: 0 };
+    if (!map[key]) map[key] = { equipamento: ev.equipamento, unidade: ev.unidade, horasTotal: 0, ocorrencias: 0, ultimaParada: '' };
     map[key].horasTotal += ev.horas;
     map[key].ocorrencias++;
+    if (ev.data && String(ev.data) > String(map[key].ultimaParada)) map[key].ultimaParada = ev.data;
   });
 
   const equipamentos = Object.values(map)
@@ -715,6 +879,8 @@ function _dashboardTempoOcioso_(unidadeParam) {
 
   const resultado = {
     unidade: isTodas ? 'Todas' : unidadeParam,
+    ano: ano,
+    mes: mes,
     totalEquipamentosParados: equipamentos.length,
     horasTotal: equipamentos.reduce((s, e) => s + e.horasTotal, 0),
     totalRecorrentes: equipamentos.filter(e => e.recorrente).length,

@@ -17,6 +17,72 @@ URL da API pra funcionar.
 
 ---
 
+## 0-d) Excluir cadastro de equipamento/armazém (some das Preventivas junto)
+
+Agora dá pra excluir um cadastro direto na lista: em **Cadastro de
+Equipamentos** e **Cadastro de Preventiva de Armazém**, cada item da lista
+ganhou um botão **🗑️ Excluir**, que abre uma confirmação antes de apagar.
+
+É uma "exclusão lógica" (soft delete): o item some da lista de cadastro, do
+dropdown de **Lançar Manutenção** e das abas **Preventivas de
+Equipamentos/Armazém** ao mesmo tempo — automaticamente, sem precisar apagar
+nada em mais de um lugar. Só o cadastro ativo desaparece; nada é apagado de
+verdade na planilha (a linha continua lá, só marcada como inativa) e o que já
+foi registrado em `Historico_Preventivas` e `Manutencoes_Custos` (as
+manutenções e preventivas já feitas daquele item) continua no histórico
+normalmente, para auditoria.
+
+Essa rodada mudou 2 arquivos na planilha (`00_Config.js`, `07_WebApp.js` —
+`01_Setup.js` não mudou, mas rode "Configurar planilha" de novo mesmo assim
+para a coluna nova **Cadastro Ativo** aparecer nas 4 abas: `Cadastro_
+Equipamentos`, `Cadastro_Preventiva_Armazem`, `Preventivas_Equipamentos` e
+`Preventivas_Armazem`) + 4 no GitHub (`app.js`, `api.js`, `css/style.css`,
+`sw.js`).
+
+## 0-c) Budget por ano — já funciona, só ganhou um seletor de ano
+
+Boa notícia: a aba **Orcamento** já foi pensada pra isso desde a Fase 2 —
+cada linha é Unidade + Classificação + **Ano** + Budget Anual, e o
+Dashboard de Gastos já calcula Gasto/Saldo olhando só os lançamentos
+daquele ano (então quando o ano vira, o Gasto de fato "zera" sozinho —
+os lançamentos de 2026 não contam mais pro total de 2027). Nada disso
+precisou mudar.
+
+O que essa rodada adicionou foi só a possibilidade de **ver** anos
+diferentes no app (antes ele sempre mostrava o ano corrente, sem opção de
+trocar): um seletor de ano no topo do Dashboard de Gastos e do Dashboard
+de Tempo Ocioso.
+
+**Pra já deixar 2027 pronto** (não precisa esperar o ano virar): abra a
+aba Orcamento e adicione linhas novas, uma por Unidade + Classificação,
+com Ano = 2027 e o Budget Anual que você quiser pra cada uma — por
+exemplo:
+
+| Unidade | Classificação | Ano | Budget Anual |
+|---|---|---|---|
+| Macatuba | EQUIPAMENTOS | 2027 | 160000 |
+| Macatuba | PREDIAL | 2027 | 75000 |
+| ... | ... | 2027 | ... |
+
+Essa atualização (0-c) é só nos arquivos `docs/app/js/app.js` e
+`docs/app/js/api.js` no GitHub — **não precisa mexer em nada na
+planilha/Apps Script desta vez**.
+
+## 0-b) Ajustes finos depois da Fase 3 (a mesma atualização de sempre)
+
+Depois do primeiro retorno de testes, mais alguns ajustes: Classificação
+agora vem antes de Equipamento/Local no lançamento (e a lista já filtra
+certo); Tempo Ocioso e Gastos ganharam filtro de mês; Gastos ganhou "Gasto
+por equipamento"; dá pra reagendar a Próxima Preventiva ou anexar um
+documento em negociação sem marcar como realizada (segundo botão na lista
+de preventivas); a lista de nomes do login saiu do código e foi pra uma
+aba nova **Usuarios** na planilha — edite direto lá pra adicionar/remover
+alguém. Desta vez só 3 arquivos mudaram na planilha (`00_Config.js`,
+`01_Setup.js`, `07_WebApp.js` — não precisa mexer em `02_Cadastro.js` nem
+`03_Historico.js`) + 2 no GitHub (`app.js`, `css/style.css`) — e rodar
+"Configurar planilha" de novo pra a aba Usuarios e a coluna "Anexo
+Negociação" aparecerem.
+
 ## 0) Já tenho o app no ar — como atualizo pra Fase 3?
 
 Mesma lógica de sempre: nenhum arquivo novo, nenhuma URL muda. É só
@@ -158,6 +224,11 @@ window.APP_CONFIG = {
 11. Na tela de entrada, escolha **"Todas as unidades"** — deve aparecer só
     o menu com os 2 dashboards (sem cadastro), e cada um deve mostrar o
     gráfico comparando as 3 unidades.
+12. Em **Cadastro de Equipamentos** (ou Armazém), clique **🗑️ Excluir** num
+    item de teste, confirme — o item deve sumir da lista de cadastro, do
+    dropdown de Lançar Manutenção e da lista de Preventivas correspondente.
+    Confira na planilha: a linha continua lá em `Cadastro_Equipamentos` e em
+    `Preventivas_Equipamentos`, só a coluna **Cadastro Ativo** virou `FALSO`.
 
 Se algo não aparecer, abra o Console do navegador (F12 → Console) — os
 erros da API aparecem lá com a mensagem exata (ex: token inválido, campo

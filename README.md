@@ -78,6 +78,22 @@ início, fim, valor e anexo) ficaram bem restritivos de propósito — se
 algum lançamento no dia a dia não tiver, por exemplo, um valor ainda
 definido, me avisa que eu relaxo essa regra pontualmente.
 
+Ajustes finos depois do primeiro teste: Classificação vem antes de
+Equipamento/Local (que filtra certo pela lista de cadastro); filtro de mês
+nos dois dashboards; "Gasto por equipamento" no Dashboard de Gastos;
+"Manutenções Preventivas" agora junta lançamentos com custo E preventivas
+de rotina marcadas como feitas; nas Preventivas dá pra reagendar a Próxima
+Preventiva ou anexar um documento em negociação sem marcar como
+realizada; e a lista de nomes do login saiu do código pra uma aba
+**Usuarios** (Nome, Unidade) — edite direto na planilha pra adicionar,
+remover ou renomear alguém.
+
+Depois disso: em **Cadastro de Equipamentos** e **Cadastro de Preventiva de
+Armazém**, cada item ganhou um botão **🗑️ Excluir** (com confirmação antes
+de apagar). É uma exclusão lógica — o item some da lista de cadastro, do
+dropdown de Lançar Manutenção e das Preventivas ao mesmo tempo, mas nada é
+apagado de verdade na planilha nem no histórico já registrado.
+
 ## Como instalar na sua planilha Google Sheets
 
 1. Abra a planilha (a mesma que o AppSheet já usa, ou a cópia migrada que eu

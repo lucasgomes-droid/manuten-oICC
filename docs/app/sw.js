@@ -9,7 +9,7 @@
  * forçar os usuários a pegarem os arquivos novos.
  */
 
-const CACHE_NAME = 'gm-app-shell-v3';
+const CACHE_NAME = 'gm-app-shell-v5';
 const SHELL_FILES = [
   './',
   './index.html',

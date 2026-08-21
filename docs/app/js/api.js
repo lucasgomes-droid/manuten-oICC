@@ -65,12 +65,15 @@ const Api = (() => {
     dashboard: (unidade) => get('dashboard', { unidade }),
     historico: (unidade, filtros) => get('historico', { unidade, ...(filtros || {}) }),
     custos: (unidade, filtros) => get('custos', { unidade, ...(filtros || {}) }),
-    dashboardCustos: (unidade, ano) => get('dashboardCustos', { unidade, ano }),
-    dashboardTempoOcioso: (unidade) => get('dashboardTempoOcioso', { unidade }),
+    dashboardCustos: (unidade, ano, mes) => get('dashboardCustos', { unidade, ano, mes }),
+    dashboardTempoOcioso: (unidade, ano, mes) => get('dashboardTempoOcioso', { unidade, ano, mes }),
+    orcamento: () => get('orcamento'),
 
     criarEquipamento: (payload) => post('criarEquipamento', payload),
     criarEstrutura: (payload) => post('criarEstrutura', payload),
     marcarPreventivaRealizada: (payload) => post('marcarPreventivaRealizada', payload),
     criarCorretiva: (payload) => post('criarCorretiva', payload),
+    editarPreventiva: (payload) => post('editarPreventiva', payload),
+    excluirCadastro: (payload) => post('excluirCadastro', payload),
   };
 })();

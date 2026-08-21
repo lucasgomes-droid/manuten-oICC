@@ -27,6 +27,8 @@ function setupSpreadsheet() {
   _ensureSheetWithHeaders(ss, SHEETS.MANUTENCOES, COLS.MANUTENCOES);
   _ensureSheetWithHeaders(ss, SHEETS.ORCAMENTO, COLS.ORCAMENTO);
   _seedOrcamento(ss);
+  _ensureSheetWithHeaders(ss, SHEETS.USUARIOS, COLS.USUARIOS);
+  _seedUsuarios(ss);
 
   _setupConfigSheet(ss);
   clearHeaderCache();
@@ -111,8 +113,14 @@ function _setupConfigSheet(ss) {
   sheet.getRange(1, 8, freqTable.length, 2).setValues(freqTable);
   sheet.getRange(1, 8, 1, 2).setFontWeight('bold').setBackground('#1c2b39').setFontColor('#ffffff');
 
+  // Lista de unidades válidas pra coluna "Unidade" da aba Usuarios (inclui
+  // "geral", pra quem pode entrar em qualquer unidade). Fica na coluna J.
+  const unidadeUsuarioCol = ['Unidade do Usuário', 'geral', ...UNIDADES];
+  sheet.getRange(1, 10, unidadeUsuarioCol.length, 1).setValues(unidadeUsuarioCol.map(v => [v]));
+  sheet.getRange(1, 10).setFontWeight('bold').setBackground('#1c2b39').setFontColor('#ffffff');
+
   sheet.setFrozenRows(1);
-  sheet.autoResizeColumns(1, columns.length + 2);
+  sheet.autoResizeColumns(1, columns.length + 3);
 }
 
 function _rangeName(colLetter) {
@@ -144,6 +152,10 @@ function _applyValidations() {
     .requireValueInRange(SpreadsheetApp.getActiveSpreadsheet().getRange(_rangeName('G')), true)
     .setAllowInvalid(false)
     .build();
+  const unidadeUsuarioRule = SpreadsheetApp.newDataValidation()
+    .requireValueInRange(SpreadsheetApp.getActiveSpreadsheet().getRange(_rangeName('J')), true)
+    .setAllowInvalid(false)
+    .build();
 
   _setValidation(SHEETS.CADASTRO_EQUIP, 'Unidade', unidadeRule);
   _setValidation(SHEETS.CADASTRO_EQUIP, 'Frequência Preventiva', freqRule);
@@ -159,6 +171,7 @@ function _applyValidations() {
   _setValidation(SHEETS.MANUTENCOES, 'Tipo', tipoRule);
   _setValidation(SHEETS.ORCAMENTO, 'Unidade', unidadeRule);
   _setValidation(SHEETS.ORCAMENTO, 'Classificação', classifOrcamentoRule);
+  _setValidation(SHEETS.USUARIOS, 'Unidade', unidadeUsuarioRule);
 }
 
 /**
@@ -182,6 +195,20 @@ function _seedOrcamento(ss) {
     ['Jundiaí II', 'GERAL', ano, 100000],
   ];
   sheet.getRange(2, 1, linhas.length, 4).setValues(linhas);
+}
+
+/**
+ * Preenche a aba Usuarios com a lista inicial (USUARIOS_SEED) — só na
+ * primeira vez (se já tiver alguma linha, não mexe, pra nunca sobrescrever
+ * uma edição manual sua). Depois de criada, essa aba é a fonte da lista de
+ * nomes do login — edite direto nela pra adicionar, remover ou renomear
+ * alguém, sem precisar mexer em código.
+ */
+function _seedUsuarios(ss) {
+  const sheet = getSheet_(SHEETS.USUARIOS);
+  if (sheet.getLastRow() > 1) return; // já tem dados — não sobrescreve
+  const linhas = USUARIOS_SEED.map(u => [u.nome, u.unidade]);
+  sheet.getRange(2, 1, linhas.length, 2).setValues(linhas);
 }
 
 function _setValidation(sheetName, headerName, rule) {

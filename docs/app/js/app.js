@@ -151,9 +151,49 @@ const routes = {
   '#/manutencoes-corretivas': () => screenListaManutencoes('CORRETIVA'),
   '#/manutencoes-preventivas': () => screenListaManutencoes('PREVENTIVA'),
   '#/historico': screenHistorico,
-  '#/dashboard-custos': screenDashboardCustos,
-  '#/dashboard-tempo-ocioso': screenDashboardTempoOcioso,
+  '#/dashboard-custos': (q) => screenDashboardCustos(q),
+  '#/dashboard-tempo-ocioso': (q) => screenDashboardTempoOcioso(q),
 };
+
+/** Select de filtro de mês reutilizado nos dois dashboards — dispara nova navegação preservando ?ano= já escolhido. */
+function filtroMesHtml(hashBase, mesAtual) {
+  return `<select class="filtro-mes" data-hash-base="${hashBase}">
+    <option value="">Ano todo</option>
+    ${MESES.map((m, i) => {
+      const v = String(i + 1).padStart(2, '0');
+      return `<option value="${v}" ${v === mesAtual ? 'selected' : ''}>${m}</option>`;
+    }).join('')}
+  </select>`;
+}
+
+/** Select de filtro de ano (Dashboards — pra ver anos anteriores depois que o ano virar). `permitirTodos` adiciona uma opção "Todos os anos" (valor vazio). */
+function filtroAnoHtml(hashBase, anoAtual, anosDisponiveis, permitirTodos) {
+  return `<select class="filtro-ano" data-hash-base="${hashBase}">
+    ${permitirTodos ? `<option value="" ${!anoAtual ? 'selected' : ''}>Todos os anos</option>` : ''}
+    ${anosDisponiveis.map(a => `<option value="${a}" ${a === String(anoAtual) ? 'selected' : ''}>${a}</option>`).join('')}
+  </select>`;
+}
+
+function _navegarComFiltros_(base) {
+  const mesSel = document.querySelector(`.filtro-mes[data-hash-base="${base}"]`);
+  const anoSel = document.querySelector(`.filtro-ano[data-hash-base="${base}"]`);
+  const partes = [];
+  if (anoSel && anoSel.value) partes.push('ano=' + anoSel.value);
+  if (mesSel && mesSel.value) partes.push('mes=' + mesSel.value);
+  window.location.hash = partes.length ? `${base}?${partes.join('&')}` : base;
+}
+
+function bindFiltroMes() {
+  document.querySelectorAll('.filtro-mes').forEach(sel => {
+    sel.addEventListener('change', () => _navegarComFiltros_(sel.dataset.hashBase));
+  });
+}
+
+function bindFiltroAno() {
+  document.querySelectorAll('.filtro-ano').forEach(sel => {
+    sel.addEventListener('change', () => _navegarComFiltros_(sel.dataset.hashBase));
+  });
+}
 
 async function router() {
   let hash = window.location.hash || '#/selecao';
@@ -425,6 +465,7 @@ async function screenCadastroEquipamento() {
     mensagemSucesso: 'Equipamento cadastrado! Já apareceu em Preventivas de Equipamentos.',
     hashAtual: '#/cadastro-equipamento',
   }), 0);
+  setTimeout(bindModalExcluirCadastro, 0);
 
   return `
     ${header('Cadastro de Equipamentos', { back: '#/menu' })}
@@ -455,6 +496,7 @@ async function screenCadastroEquipamento() {
         ${lista.length ? lista.slice().reverse().map(itemEquipamentoRow).join('') :
           '<p class="empty-state">Nenhum equipamento cadastrado ainda nesta unidade.</p>'}
       </div>
+      ${modalExcluirCadastroHtml()}
     </main>`;
 }
 
@@ -467,6 +509,7 @@ function itemEquipamentoRow(r) {
     <div class="list-row__meta">
       <span>${escapeHtml(r['Tipo'] || '—')}</span>
       <span>${escapeHtml(r['Frequência Preventiva'] || '—')}</span>
+      <button class="btn btn--small btn--perigo" data-id="${escapeHtml(r['ID_Equipamento'])}" data-tipo="equipamento" data-nome-item="${escapeHtml(r['Equipamento'] || '')}" data-action="abrir-modal-excluir">🗑️ Excluir</button>
     </div>
   </div>`;
 }
@@ -500,6 +543,7 @@ async function screenCadastroArmazem() {
     mensagemSucesso: 'Item cadastrado! Já apareceu em Preventivas de Armazém.',
     hashAtual: '#/cadastro-armazem',
   }), 0);
+  setTimeout(bindModalExcluirCadastro, 0);
 
   return `
     ${header('Cadastro de Preventiva de Armazém', { back: '#/menu' })}
@@ -532,6 +576,7 @@ async function screenCadastroArmazem() {
         ${lista.length ? lista.slice().reverse().map(itemArmazemRow).join('') :
           '<p class="empty-state">Nenhum item cadastrado ainda nesta unidade.</p>'}
       </div>
+      ${modalExcluirCadastroHtml()}
     </main>`;
 }
 
@@ -544,6 +589,7 @@ function itemArmazemRow(r) {
     <div class="list-row__meta">
       <span>${escapeHtml(r['Criticidade'] || '—')}</span>
       <span>${escapeHtml(r['Frequência'] || '—')}</span>
+      <button class="btn btn--small btn--perigo" data-id="${escapeHtml(r['ID_Estrutura'])}" data-tipo="armazem" data-nome-item="${escapeHtml(r['Descrição'] || r['Categoria'] || '')}" data-action="abrir-modal-excluir">🗑️ Excluir</button>
     </div>
   </div>`;
 }
@@ -576,6 +622,70 @@ function bindCadastroForm({ formId, build, submit, campoObrigatorio, mensagemSuc
       toast(err.message || 'Erro ao salvar.', 'erro');
       btn.disabled = false;
       btn.textContent = form === document.getElementById('form-cadastro-equip') ? 'Cadastrar equipamento' : 'Cadastrar item';
+    }
+  });
+}
+
+/** Modal de confirmação de exclusão de cadastro (equipamento ou item de armazém). */
+function modalExcluirCadastroHtml() {
+  return `
+    <div class="modal-backdrop" id="modal-excluir-cadastro" hidden>
+      <div class="modal">
+        <h3>Excluir cadastro</h3>
+        <p id="modal-excluir-nome" class="muted"></p>
+        <p>Isso remove o item da lista de cadastros e ele some automaticamente das
+          Preventivas (e do formulário de Lançar Manutenção). O histórico de
+          manutenções e preventivas já realizadas <strong>não</strong> é apagado —
+          continua disponível para consulta.</p>
+        <div class="modal__actions">
+          <button type="button" class="btn btn--secondary" data-action="fechar-modal-excluir">Cancelar</button>
+          <button type="button" class="btn btn--perigo" id="btn-confirmar-excluir">Excluir</button>
+        </div>
+      </div>
+    </div>`;
+}
+
+/** Liga o botão "🗑️ Excluir" das listas de Cadastro de Equipamentos/Armazém ao modal de confirmação acima. */
+function bindModalExcluirCadastro() {
+  const modal = document.getElementById('modal-excluir-cadastro');
+  if (!modal) return;
+  const nomeEl = document.getElementById('modal-excluir-nome');
+  const btnConfirmar = document.getElementById('btn-confirmar-excluir');
+  let alvo = null; // { id, tipo, nome }
+
+  document.querySelectorAll('[data-action="abrir-modal-excluir"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      alvo = { id: btn.dataset.id, tipo: btn.dataset.tipo, nome: btn.dataset.nomeItem };
+      nomeEl.textContent = `Tem certeza que deseja excluir "${alvo.nome}"?`;
+      modal.hidden = false;
+    });
+  });
+
+  modal.querySelectorAll('[data-action="fechar-modal-excluir"]').forEach(btn => {
+    btn.addEventListener('click', () => { modal.hidden = true; alvo = null; });
+  });
+
+  btnConfirmar.addEventListener('click', async () => {
+    if (!alvo) return;
+    btnConfirmar.disabled = true;
+    btnConfirmar.textContent = 'Excluindo...';
+    try {
+      await Api.excluirCadastro({
+        tipo: alvo.tipo,
+        id: alvo.id,
+        registradoPor: (Session.get() || {}).nome || '',
+      });
+      Cache.clear();
+      toast('Cadastro excluído. Já sumiu das Preventivas.', 'sucesso');
+      modal.hidden = true;
+      const current = window.location.hash;
+      window.location.hash = '#/menu';
+      setTimeout(() => { window.location.hash = current; }, 0);
+    } catch (err) {
+      toast(err.message || 'Erro ao excluir.', 'erro');
+    } finally {
+      btnConfirmar.disabled = false;
+      btnConfirmar.textContent = 'Excluir';
     }
   });
 }
@@ -662,19 +772,44 @@ async function screenPreventivas(tipo, query) {
           </form>
         </div>
       </div>
+
+      <div class="modal-backdrop" id="modal-editar" hidden>
+        <div class="modal">
+          <h3>Alterar data / anexar documento</h3>
+          <p id="modal-editar-nome" class="muted"></p>
+          <form id="form-editar">
+            <label>Nova data da Próxima Preventiva <span class="muted">(opcional — reagenda sem marcar como realizada, ex: prestador remarcou)</span>
+              <input type="date" name="novaProximaData" />
+            </label>
+            <label>Anexo <span class="muted">(opcional — orçamento em negociação, fica visível na lista até a preventiva ser marcada como realizada)</span>
+              <input type="file" name="anexo" accept="image/*,.pdf" />
+            </label>
+            <label>Observação
+              <textarea name="observacao" rows="3" placeholder="Opcional"></textarea>
+            </label>
+            <div class="modal__actions">
+              <button type="button" class="btn btn--secondary" data-action="fechar-modal-editar">Cancelar</button>
+              <button type="submit" class="btn btn--primary">Salvar</button>
+            </div>
+          </form>
+        </div>
+      </div>
     </main>`;
 }
 
 function rowPreventiva(r, mostrarTipo) {
   const codigo = r._status.codigo;
+  const anexoNegociacao = r['Anexo Negociação'];
   return `<div class="list-row list-row--preventiva" data-nome="${escapeHtml((r._nome || '').toLowerCase())}" data-status="${codigo}">
     <div class="list-row__main">
       <strong>${escapeHtml(r._nome || '—')}</strong>
       <span class="muted">${mostrarTipo ? (r._tipo === 'equipamento' ? '⚙️ Equipamento · ' : '📦 Armazém · ') : ''}Última: ${fmtDate(r['Última Preventiva'])} · Próxima: ${fmtDate(r['Próxima Preventiva'])}</span>
+      ${anexoNegociacao ? `<a href="${escapeHtml(anexoNegociacao)}" target="_blank" rel="noopener" class="anexo-link">📎 Anexo em negociação</a>` : ''}
     </div>
     <div class="list-row__side">
       <span class="badge badge--${codigo}">${STATUS_LABEL[codigo]}</span>
       <button class="btn btn--small" data-id="${escapeHtml(r['ID_Preventiva'])}" data-tipo="${r._tipo}" data-nome-item="${escapeHtml(r._nome || '')}" data-action="abrir-modal">Marcar realizada</button>
+      <button class="btn btn--small btn--secondary" data-id="${escapeHtml(r['ID_Preventiva'])}" data-tipo="${r._tipo}" data-nome-item="${escapeHtml(r._nome || '')}" data-proxima="${escapeHtml(r['Próxima Preventiva'] || '')}" data-action="abrir-modal-editar">Alterar data / anexar</button>
     </div>
   </div>`;
 }
@@ -780,6 +915,62 @@ function bindPreventivasScreen(statusInicial) {
       btn.textContent = 'Confirmar';
     }
   });
+
+  // Modal "Alterar data / anexar" — reagenda a Próxima Preventiva e/ou
+  // anexa um documento (ex: orçamento em negociação) sem marcar como
+  // realizada.
+  const modalEditar = document.getElementById('modal-editar');
+  const formEditar = document.getElementById('form-editar');
+  let idEditar = null;
+  let tipoEditar = null;
+
+  document.querySelectorAll('[data-action="abrir-modal-editar"]').forEach(btn => {
+    btn.addEventListener('click', () => {
+      idEditar = btn.dataset.id;
+      tipoEditar = btn.dataset.tipo;
+      document.getElementById('modal-editar-nome').textContent = btn.dataset.nomeItem;
+      formEditar.novaProximaData.value = btn.dataset.proxima || '';
+      formEditar.anexo.value = '';
+      formEditar.observacao.value = '';
+      modalEditar.hidden = false;
+    });
+  });
+
+  modalEditar.querySelectorAll('[data-action="fechar-modal-editar"]').forEach(el => el.addEventListener('click', () => { modalEditar.hidden = true; }));
+  modalEditar.addEventListener('click', (e) => { if (e.target === modalEditar) modalEditar.hidden = true; });
+
+  formEditar.addEventListener('submit', async (e) => {
+    e.preventDefault();
+    const btn = formEditar.querySelector('button[type="submit"]');
+    const anexo = await fileParaBase64(formEditar.anexo);
+    if (!formEditar.novaProximaData.value && !anexo.base64) {
+      toast('Preencha uma nova data ou escolha um anexo.', 'erro');
+      return;
+    }
+    btn.disabled = true;
+    btn.textContent = 'Salvando...';
+    try {
+      const payload = {
+        tipo: tipoEditar, idPreventiva: idEditar,
+        observacao: formEditar.observacao.value.trim(),
+        registradoPor: (Session.get() || {}).nome || '',
+      };
+      if (formEditar.novaProximaData.value) payload.novaProximaData = formEditar.novaProximaData.value;
+      if (anexo.base64) { payload.anexoBase64 = anexo.base64; payload.anexoNome = anexo.nome; }
+      await Api.editarPreventiva(payload);
+      Cache.clear();
+      toast('Preventiva atualizada!', 'sucesso');
+      modalEditar.hidden = true;
+      const current = window.location.hash;
+      window.location.hash = '#/menu';
+      setTimeout(() => { window.location.hash = current; }, 0);
+    } catch (err) {
+      toast(err.message || 'Erro ao salvar.', 'erro');
+    } finally {
+      btn.disabled = false;
+      btn.textContent = 'Salvar';
+    }
+  });
 }
 
 // ---------------------------------------------------------------------
@@ -800,10 +991,8 @@ async function screenLancarManutencao() {
     return `${header('Lançar Manutenção', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
 
-  setTimeout(() => bindLancarManutencaoForm(), 0);
+  setTimeout(() => bindLancarManutencaoForm(equipamentos, estruturas), 0);
 
-  const opcoesEquip = equipamentos.map(e => `<option value="${escapeHtml(e['Equipamento'])}">⚙️ ${escapeHtml(e['Equipamento'])}</option>`).join('');
-  const opcoesEstrutura = estruturas.map(e => `<option value="${escapeHtml(e['Descrição'] || e['Categoria'])}">📦 ${escapeHtml(e['Descrição'] || e['Categoria'])}</option>`).join('');
   const outrosTipos = cfg.tiposManutencao.filter(t => TIPOS_PRINCIPAIS.indexOf(t) === -1);
 
   return `
@@ -823,23 +1012,22 @@ async function screenLancarManutencao() {
         </label>
         <input type="hidden" name="tipo" value="CORRETIVA" />
 
+        <label>Classificação * <span class="muted">(escolha primeiro — filtra a lista de equipamento/local abaixo)</span>
+          <select name="classificacao" required>
+            <option value="" disabled selected>Selecione...</option>
+            ${cfg.classificacoes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
+          </select>
+        </label>
+
         <label>Equipamento / Local *
-          <select name="equipamentoSelect" required>
-            <option value="" disabled selected>Selecione no cadastro...</option>
-            ${opcoesEquip}
-            ${opcoesEstrutura}
-            <option value="__outro__">Outro (não está na lista — digitar)</option>
+          <select name="equipamentoSelect" required disabled>
+            <option value="" disabled selected>Escolha a classificação primeiro...</option>
           </select>
         </label>
         <label id="campo-equipamento-outro" hidden>Nome do equipamento/local *
           <input type="text" name="equipamentoOutro" placeholder="Ex: Empilhadeira Elétrica 01" />
         </label>
 
-        <label>Classificação *
-          <select name="classificacao" required>
-            ${cfg.classificacoes.map(c => `<option value="${escapeHtml(c)}">${escapeHtml(c)}</option>`).join('')}
-          </select>
-        </label>
         <label>Responsável / Prestador
           <input type="text" name="responsavel" placeholder="Ex: Prestadora XYZ" />
         </label>
@@ -864,7 +1052,7 @@ async function screenLancarManutencao() {
     </main>`;
 }
 
-function bindLancarManutencaoForm() {
+function bindLancarManutencaoForm(equipamentos, estruturas) {
   const form = document.getElementById('form-manutencao');
   if (!form) return;
 
@@ -880,6 +1068,25 @@ function bindLancarManutencaoForm() {
     if (form.tipoOutro.value) {
       form.querySelectorAll('.segmented__btn').forEach(b => b.classList.remove('segmented__btn--ativo'));
     }
+  });
+
+  // Classificação escolhida primeiro filtra de onde vem a lista de
+  // equipamento/local: EQUIPAMENTOS -> Cadastro de Equipamentos,
+  // PREDIAL -> Cadastro de Preventiva de Armazém.
+  form.classificacao.addEventListener('change', () => {
+    const isEquip = form.classificacao.value === 'EQUIPAMENTOS';
+    const fonte = isEquip
+      ? equipamentos.map(e => ({ valor: e['Equipamento'], icone: '⚙️' }))
+      : estruturas.map(e => ({ valor: e['Descrição'] || e['Categoria'], icone: '📦' }));
+    const opcoes = fonte.filter(f => f.valor)
+      .map(f => `<option value="${escapeHtml(f.valor)}">${f.icone} ${escapeHtml(f.valor)}</option>`).join('');
+    form.equipamentoSelect.innerHTML =
+      `<option value="" disabled selected>Selecione no cadastro...</option>${opcoes}` +
+      `<option value="__outro__">Outro (não está na lista — digitar)</option>`;
+    form.equipamentoSelect.disabled = false;
+    document.getElementById('campo-equipamento-outro').hidden = true;
+    form.equipamentoOutro.required = false;
+    form.equipamentoOutro.value = '';
   });
 
   form.equipamentoSelect.addEventListener('change', () => {
@@ -949,43 +1156,102 @@ function bindLancarManutencaoForm() {
 // aba — o lançamento de ambas acontece na tela única acima)
 // ---------------------------------------------------------------------
 
+/** Normaliza uma linha de Manutencoes_Custos ou de Historico_Preventivas pro mesmo formato de exibição. */
+function _normalizaManutencao_(r, origem) {
+  if (origem === 'lancamento') {
+    return {
+      equipamento: r['Equipamento'] || '—', tipo: r['Tipo'] || '',
+      data: r['Data Início'], tempo: r['Tempo Parada (h)'],
+      valor: r['Valor'], responsavel: r['Responsável'],
+      anexo: r['Anexo'], registradoPor: r['Registrado Por'],
+      origem: 'Lançamento',
+    };
+  }
+  return {
+    equipamento: r['Equipamento / Estrutura'] || '—', tipo: 'PREVENTIVA (rotina)',
+    data: r['Data da Realização'], tempo: r['Tempo Parada (h)'],
+    valor: r['Valor'], responsavel: r['Prestadora'],
+    anexo: r['Documento / Anexo'], registradoPor: r['Registrado Por'],
+    origem: 'Rotina',
+  };
+}
+
 async function screenListaManutencoes(tipoFiltro) {
   const s = Session.get();
   const isPrev = tipoFiltro === 'PREVENTIVA';
-  const titulo = isPrev ? 'Manutenções Preventivas (com custo)' : 'Manutenções Corretivas';
+  const titulo = isPrev ? 'Manutenções Preventivas' : 'Manutenções Corretivas';
   let lista;
   try {
-    lista = await Api.custos(s.unidade, { tipo: tipoFiltro });
+    if (isPrev) {
+      const [lancadas, rotina] = await Promise.all([
+        Api.custos(s.unidade, { tipo: 'PREVENTIVA' }),
+        Api.historico(s.unidade, {}),
+      ]);
+      lista = lancadas.map(r => _normalizaManutencao_(r, 'lancamento'))
+        .concat(rotina.map(r => _normalizaManutencao_(r, 'rotina')));
+      lista.sort((a, b) => String(b.data).localeCompare(String(a.data)));
+    } else {
+      lista = (await Api.custos(s.unidade, { tipo: tipoFiltro })).map(r => _normalizaManutencao_(r, 'lancamento'));
+    }
   } catch (err) {
     return `${header(titulo, { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
+
+  setTimeout(() => bindListaManutencoesFiltro(), 0);
 
   return `
     ${header(titulo, { back: '#/menu' })}
     <main class="container">
       <button class="btn btn--primary btn--block" data-nav="#/manutencoes">+ Lançar ${isPrev ? 'preventiva' : 'corretiva'}</button>
-      <h2 class="section-title">Lançamentos (${lista.length})</h2>
-      <div class="list">
-        ${lista.length ? lista.map(itemCorretivaRow).join('') :
+      ${isPrev ? '<p class="muted status-strip__dica">Junta lançamentos com custo (tela "Lançar Manutenção") e preventivas de rotina marcadas como realizadas.</p>' : ''}
+      <div class="filtros">
+        <input type="search" id="manut-busca" placeholder="Buscar equipamento..." />
+        <select id="manut-mes">
+          <option value="">Todos os meses</option>
+          ${MESES.map((m, i) => `<option value="${String(i + 1).padStart(2, '0')}">${m}</option>`).join('')}
+        </select>
+      </div>
+      <h2 class="section-title" id="manut-contador">Lançamentos (${lista.length})</h2>
+      <div class="list" id="manut-lista">
+        ${lista.length ? lista.map(itemManutencaoRow).join('') :
           `<p class="empty-state">Nenhum lançamento de ${isPrev ? 'preventiva' : 'corretiva'} ainda nesta unidade.</p>`}
       </div>
     </main>`;
 }
 
-function itemCorretivaRow(r) {
-  const tempo = r['Tempo Parada (h)'];
-  const anexo = r['Anexo'];
-  return `<div class="list-row">
+function itemManutencaoRow(m) {
+  const mesData = m.data ? String(m.data).slice(5, 7) : '';
+  return `<div class="list-row" data-nome="${escapeHtml((m.equipamento || '').toLowerCase())}" data-mes="${mesData}">
     <div class="list-row__main">
-      <strong>${escapeHtml(r['Equipamento'] || '—')}</strong>
-      <span class="muted">${escapeHtml(r['Tipo'] || '')} · ${fmtDate(r['Data Início'])}${tempo ? ' · ' + fmtHoras(tempo) + ' parado' : ''}${r['Registrado Por'] ? ' · por ' + escapeHtml(r['Registrado Por']) : ''}</span>
+      <strong>${escapeHtml(m.equipamento)}</strong>
+      <span class="muted">${escapeHtml(m.tipo)} · ${fmtDate(m.data)}${m.tempo ? ' · ' + fmtHoras(m.tempo) + ' parado' : ''}${m.registradoPor ? ' · por ' + escapeHtml(m.registradoPor) : ''}</span>
     </div>
     <div class="list-row__meta">
-      <span>${fmtMoney(r['Valor'])}</span>
-      <span>${escapeHtml(r['Responsável'] || '—')}</span>
-      ${anexo ? `<a href="${escapeHtml(anexo)}" target="_blank" rel="noopener" class="anexo-link">📎 Anexo</a>` : ''}
+      <span>${m.valor ? fmtMoney(m.valor) : '—'}</span>
+      <span>${escapeHtml(m.responsavel || '—')}</span>
+      ${m.anexo ? `<a href="${escapeHtml(m.anexo)}" target="_blank" rel="noopener" class="anexo-link">📎 Anexo</a>` : ''}
     </div>
   </div>`;
+}
+
+function bindListaManutencoesFiltro() {
+  const busca = document.getElementById('manut-busca');
+  const mesSel = document.getElementById('manut-mes');
+  const contador = document.getElementById('manut-contador');
+  const aplicar = () => {
+    const termo = (busca.value || '').toLowerCase();
+    let visiveis = 0;
+    document.querySelectorAll('#manut-lista .list-row').forEach(el => {
+      const bateNome = !termo || el.dataset.nome.includes(termo);
+      const bateMes = !mesSel.value || el.dataset.mes === mesSel.value;
+      const mostrar = bateNome && bateMes;
+      el.style.display = mostrar ? '' : 'none';
+      if (mostrar) visiveis++;
+    });
+    if (contador) contador.textContent = `Lançamentos (${visiveis})`;
+  };
+  busca && busca.addEventListener('input', aplicar);
+  mesSel && mesSel.addEventListener('change', aplicar);
 }
 
 // ---------------------------------------------------------------------
@@ -1065,18 +1331,30 @@ function bindHistoricoScreen() {
 // Tela: Dashboard de Gastos (budget / saldo / gasto)
 // ---------------------------------------------------------------------
 
-async function screenDashboardCustos() {
+async function screenDashboardCustos(query) {
   const s = Session.get();
   const todas = s.unidade === 'Todas';
-  let d;
+  const mes = (query && query.get('mes')) || '';
+  const ano = (query && query.get('ano')) || '';
+  let d, orcamentoRows;
   try {
-    d = await Api.dashboardCustos(s.unidade, '');
+    [d, orcamentoRows] = await Promise.all([
+      Api.dashboardCustos(s.unidade, ano, mes),
+      Cache.get('orcamento') || Cache.set('orcamento', await Api.orcamento()),
+    ]);
   } catch (err) {
     return `${header('Gastos e Budget', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
 
+  setTimeout(bindFiltroMes, 0);
+  setTimeout(bindFiltroAno, 0);
+
+  const anosComOrcamento = Array.from(new Set((orcamentoRows || []).map(r => String(r['Ano'])))).filter(Boolean);
+  const anosDisponiveis = Array.from(new Set([...anosComOrcamento, String(d.ano), String(Number(d.ano) + 1)])).sort();
+
   const evolucao = (d.evolucaoMensal || []).map(m => ({ label: fmtMesLabel(m.mes), value: m.valor }));
   const porTipo = (d.custoPorTipo || []).map(t => ({ label: t.tipo, value: t.valor }));
+  const porEquipamento = (d.custoPorEquipamento || []).map(e => ({ label: e.equipamento, value: e.valor }));
 
   const blocoUnidade = (nome, budget, gasto, saldo) => `
     <div class="custo-card">
@@ -1121,11 +1399,20 @@ async function screenDashboardCustos() {
   return `
     ${header('Gastos e Budget' + (todas ? ' — todas as unidades' : ''), { back: '#/menu' })}
     <main class="container">
+      <div class="filtros">
+        ${filtroAnoHtml('#/dashboard-custos', d.ano, anosDisponiveis)}
+        ${filtroMesHtml('#/dashboard-custos', mes)}
+      </div>
+      <p class="muted status-strip__dica">O ano escolhido acima define Budget/Saldo/Gasto inteiros; o filtro de mês só recorta "Custo por tipo" e "Gasto por equipamento" abaixo.</p>
+
       ${cardsPorUnidade}
       ${graficoPorUnidade}
 
-      <h2 class="section-title">Custo por tipo de manutenção</h2>
+      <h2 class="section-title">Custo por tipo de manutenção${mes ? ' — ' + fmtMesLabel(d.ano + '-' + mes) : ''}</h2>
       ${barList(porTipo, { fmt: fmtMoney, vazio: 'Sem lançamentos de custo ainda. Lançamentos de preventiva com valor (tela "Lançar Manutenção") também entram aqui.' })}
+
+      <h2 class="section-title">Gasto por equipamento${mes ? ' — ' + fmtMesLabel(d.ano + '-' + mes) : ''}</h2>
+      ${barList(porEquipamento, { fmt: fmtMoney, vazio: 'Sem lançamentos de custo ainda.' })}
 
       <h2 class="section-title">Evolução mensal de custos</h2>
       ${barList(evolucao, { fmt: fmtMoney, vazio: 'Sem lançamentos com data ainda.' })}
@@ -1136,15 +1423,23 @@ async function screenDashboardCustos() {
 // Tela: Dashboard de Tempo Ocioso
 // ---------------------------------------------------------------------
 
-async function screenDashboardTempoOcioso() {
+async function screenDashboardTempoOcioso(query) {
   const s = Session.get();
   const todas = s.unidade === 'Todas';
+  const mes = (query && query.get('mes')) || '';
+  const ano = (query && query.get('ano')) || '';
   let d;
   try {
-    d = await Api.dashboardTempoOcioso(s.unidade);
+    d = await Api.dashboardTempoOcioso(s.unidade, ano, mes);
   } catch (err) {
     return `${header('Tempo Ocioso', { back: '#/menu' })}<main class="container">${errorBlock(err)}</main>`;
   }
+
+  setTimeout(bindFiltroMes, 0);
+  setTimeout(bindFiltroAno, 0);
+
+  const anoCorrente = new Date().getFullYear();
+  const anosDisponiveisTO = [String(anoCorrente - 1), String(anoCorrente), String(anoCorrente + 1)];
 
   const graficoPorUnidade = todas
     ? `<h2 class="section-title">Tempo parado por unidade</h2>
@@ -1162,6 +1457,11 @@ async function screenDashboardTempoOcioso() {
   return `
     ${header('Tempo Ocioso' + (todas ? ' — todas as unidades' : ''), { back: '#/menu' })}
     <main class="container">
+      <div class="filtros">
+        ${filtroAnoHtml('#/dashboard-tempo-ocioso', ano, anosDisponiveisTO, true)}
+        ${filtroMesHtml('#/dashboard-tempo-ocioso', mes)}
+      </div>
+
       <section class="kpi-grid">
         <div class="kpi-card kpi-card--accent">
           <span class="kpi-card__label">Equipamentos com parada registrada</span>
@@ -1185,7 +1485,7 @@ async function screenDashboardTempoOcioso() {
           <div class="list-row">
             <div class="list-row__main">
               <strong>${escapeHtml(e.equipamento || '—')}</strong>
-              <span class="muted">${todas ? escapeHtml(e.unidade) + ' · ' : ''}${e.ocorrencias} parada${e.ocorrencias === 1 ? '' : 's'}</span>
+              <span class="muted">${todas ? escapeHtml(e.unidade) + ' · ' : ''}${e.ocorrencias} manutenç${e.ocorrencias === 1 ? 'ão' : 'ões'} · última parada: ${fmtDate(e.ultimaParada)}</span>
             </div>
             <div class="list-row__side">
               <span class="badge badge--${e.recorrente ? 'atrasada' : 'em_dia'}">${e.recorrente ? '🔁 Recorrente' : 'Único'}</span>
